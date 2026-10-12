@@ -1,0 +1,25 @@
+{
+  "name": "bilibili-time-filter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "B 站按本地截止时间过滤当前页面内容的油猴脚本和 Chrome MV3 扩展",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "build:userscript": "vite build --mode userscript",
+    "build:userscript:dev": "vite build --mode userscript-dev",
+    "build:extension": "vite build --mode extension-content && vite build --mode extension-main",
+    "build:extension:dev": "vite build --mode extension-content-dev && vite build --mode extension-main-dev",
+    "build:dev": "npm run build:userscript:dev && npm run build:extension:dev",
+    "build": "npm run typecheck && npm test -- --run && npm run build:userscript && npm run build:extension"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "@types/node": "^22.10.2",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8"
+  }
+}

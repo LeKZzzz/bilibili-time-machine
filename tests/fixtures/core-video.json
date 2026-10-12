@@ -1,0 +1,6 @@
+[
+  { "bvid": "BVbefore", "pubdate": 1760000000, "pic": "https://i.example/before.jpg" },
+  { "bvid": "BVexact", "pubdate": 1760000060, "pic": "https://i.example/exact.jpg" },
+  { "bvid": "BVunknown", "pic": "https://i.example/unknown.jpg" },
+  { "bvid": "BVsupplement", "pic": "https://i.example/supplement.jpg" }
+]
