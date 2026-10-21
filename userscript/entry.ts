@@ -5,8 +5,10 @@ import { installNetworkHook, type NetworkHookHandle } from '../src/page/network-
 import { matchSupportedRoute } from '../src/routes/match';
 import { createPageVideoFetcher, createVideoController } from '../src/runtime/video-controller';
 import { createNativeSearchFilter } from '../src/runtime/native-search-filter';
+import { getSearchRepagination, type SearchRepaginationHandle } from '../src/runtime/search-repagination';
 import { resolveAutoAdvanceConfig } from '../src/core/auto-advance';
 import { configLog, devLog } from '../src/core/dev-log';
+import { createFavoriteHomeFillController, loadFavoriteFolders, type FavoriteHomeFillController } from '../src/runtime/favorite-home-fill-controller';
 
 const STORAGE_KEY = 'bilibili-time-filter.config.v1';
 const BRIDGE_SOURCE = 'bilibili-time-filter';
@@ -51,6 +53,11 @@ function normaliseConfig(value: unknown): FilterPanelConfig {
     autoAdvanceStartedAt: Number.isFinite(input.autoAdvanceStartedAt) ? input.autoAdvanceStartedAt : null,
     autoAdvanceBaseCutoffMinute: typeof input.autoAdvanceBaseCutoffMinute === 'string' && input.autoAdvanceBaseCutoffMinute
       ? input.autoAdvanceBaseCutoffMinute : null,
+    favoriteHomeFillEnabled: input.favoriteHomeFillEnabled === true,
+    favoriteFolderIds: Array.isArray(input.favoriteFolderIds) ? input.favoriteFolderIds.filter((id): id is string => typeof id === 'string').slice(0, 10) : [],
+    favoriteFolderLimit: Number.isFinite(input.favoriteFolderLimit) ? Math.min(10, Math.max(1, Math.round(Number(input.favoriteFolderLimit)))) : 3,
+    favoriteVideoLimit: Number.isFinite(input.favoriteVideoLimit) ? Math.min(200, Math.max(1, Math.round(Number(input.favoriteVideoLimit)))) : 50,
+    favoriteRefreshRequestedAt: Number.isFinite(input.favoriteRefreshRequestedAt) ? input.favoriteRefreshRequestedAt : null,
   };
 }
 
@@ -86,6 +93,9 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   let configReady = false;
   const notices = createNoticeManager({ document: documentRef });
   const nativeSearchFilter = route.kind === 'search' ? createNativeSearchFilter(documentRef) : null;
+  const repagination: SearchRepaginationHandle | null = route.kind === 'search'
+    ? getSearchRepagination({ document: documentRef, target, onNotice: () => { if (configReady) notices.show('跨页补齐失败，已退回逐页过滤。', 'repagination-failed'); } })
+    : null;
   const controller = createVideoController({
     root: documentRef,
     config: current,
@@ -93,6 +103,8 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     observe: true,
     onNotice: (reason) => { if (configReady) notices.show('过滤器无法验证当前内容，相关内容已隐藏。', reason); },
   });
+  const pageFetch = target.fetch ? target.fetch.bind(target) : undefined;
+  const favoriteFill: FavoriteHomeFillController = createFavoriteHomeFillController({ root: documentRef, config: current, fetch: pageFetch, onNotice: () => { if (configReady) notices.show('收藏标签补位失败，本轮已停止。', 'favorite-fill-failed'); } });
   let autoAdvanceTimer: number | undefined;
   const refreshAutoAdvance = (): void => {
     if (!configReady || !current.autoAdvance) return;
@@ -101,6 +113,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     current = next;
     controller.updateCutoff(next.cutoffMinute);
     nativeSearchFilter?.apply(next);
+    repagination?.apply(next);
     panel?.update(next);
     sendBridgeMessage(next);
   };
@@ -118,17 +131,24 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     target,
     getConfig: () => (configReady ? resolveAutoAdvanceConfig(current) : initialConfig),
     onNotice: (reason) => notices.show('过滤器无法验证当前内容，相关内容已隐藏。', reason),
+    filterVideoResponse: repagination
+      ? (url, payload, config) => repagination.transformVideo(url, payload, config)
+      : undefined,
   });
   let panel: FilterPanelController;
   panel = createFilterPanel({
     document: documentRef,
     config: current,
+    onFavoriteFoldersRefresh: pageFetch ? () => loadFavoriteFolders(pageFetch) : undefined,
+    onFavoriteTagsLoad: () => favoriteFill.getTags(),
     onChange: async (config) => {
       if (!configReady) return;
       current = resolveAutoAdvanceConfig(normaliseConfig(config));
       if (__TIME_FILTER_DEV__) devLog.log(configLog('config-changed', current, 'userscript'));
       controller.updateConfig(current);
+      favoriteFill?.updateConfig(current);
       nativeSearchFilter?.apply(current);
+      repagination?.apply(current);
       await writeConfig(current);
       sendBridgeMessage(current);
     },
@@ -143,7 +163,9 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   void initialConfig.then((config) => {
     current = resolveAutoAdvanceConfig(config);
     controller.updateConfig(current);
+    favoriteFill?.updateConfig(current);
     nativeSearchFilter?.apply(current);
+    repagination?.apply(current);
     panel.update(current);
     sendBridgeMessage(current);
   }).catch(() => {
@@ -160,7 +182,9 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
       if (initialScanTimer !== undefined) target.clearTimeout(initialScanTimer);
       if (autoAdvanceTimer !== undefined) target.clearInterval(autoAdvanceTimer);
       nativeSearchFilter?.destroy();
+      repagination?.destroy();
       controller.disconnect();
+      favoriteFill?.disconnect();
       panel.destroy();
       notices.destroy();
       target.removeEventListener('message', onMessage);

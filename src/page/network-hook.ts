@@ -12,6 +12,12 @@ export interface NetworkHookOptions {
   getConfig?: () => FilterConfig | Promise<FilterConfig>;
   onNotice?: (reason: 'config-pending' | 'config-read-failed' | 'parse-failed' | 'hook-failed') => void;
   onResponse?: (url: string, payload: unknown, config: FilterConfig) => unknown | Promise<unknown>;
+  /**
+   * 视频响应统一委托：可实现搜索结果跨页补齐并返回重排后的载荷；返回
+   * `undefined` 时沿用现有的逐页严格过滤。回调在过滤前收到页面原始载荷，
+   * 不得改写 WBI 签名 URL，也不得把响应正文写入日志。
+   */
+  filterVideoResponse?: (url: string, payload: unknown, config: FilterConfig) => unknown | undefined;
   /** 可用于测试，或页面上下文中显式指定原始实现。 */
   fetch?: typeof fetch;
 }
@@ -21,7 +27,7 @@ export interface NetworkHookHandle {
   installed: boolean;
 }
 
-const VIDEO_RESPONSE_PATH = /\/(?:x\/web-interface\/view|x\/web-interface\/search|x\/v2\/feed|x\/web-interface\/archive|x\/player\/pagelist)(?:\/|$)/i;
+const VIDEO_RESPONSE_PATH = /\/(?:x\/web-interface\/view|x\/web-interface\/(?:wbi\/)?search|x\/v2\/feed|x\/web-interface\/archive|x\/player\/pagelist)(?:\/|$)/i;
 
 function isVideoResponseUrl(url: string): boolean {
   try {
@@ -155,6 +161,11 @@ function processPayload(
     return result.payload;
   }
   if (isVideoResponseUrl(url)) {
+    const delegated = options.filterVideoResponse?.(url, payload, config);
+    if (delegated !== undefined) {
+      if (__TIME_FILTER_DEV__) logNetwork(url, 'video', undefined, true);
+      return delegated;
+    }
     const outcome = filterVideoPayloadDetailed(payload, config);
     if (__TIME_FILTER_DEV__) {
       logNetwork(url, 'video', { total: outcome.total, visible: outcome.kept, hidden: Math.max(0, outcome.total - outcome.kept) });

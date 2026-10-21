@@ -171,3 +171,40 @@ describe('filterVideoPayloadDetailed', () => {
     expect(outcome).toEqual({ payload: value, total: 0, kept: 0 });
   });
 });
+
+describe('video response delegation', () => {
+  it('lets a filterVideoResponse delegate replace the payload without per-page filtering', async () => {
+    const seen: Array<{ url: string; enabled: boolean }> = [];
+    const handle = installNetworkHook({
+      target: window,
+      config,
+      fetch: (async () => new Response('{}')) as typeof fetch,
+      filterVideoResponse: (url, payload, cfg) => {
+        seen.push({ url, enabled: cfg.enabled });
+        expect(String(url)).toContain('/x/web-interface/wbi/search/type');
+        return { data: { result: [{ bvid: 'BVdelegated' }] } };
+      },
+    });
+    const response = await window.fetch('https://api.bilibili.com/x/web-interface/wbi/search/type?keyword=test&page=1');
+    const body = await response.json() as { data: { result: Array<{ bvid: string }> } };
+    expect(seen).toHaveLength(1);
+    expect(body.data.result).toEqual([{ bvid: 'BVdelegated' }]);
+    handle.uninstall();
+  });
+
+  it('falls back to per-page filtering when the delegate returns undefined', async () => {
+    const handle = installNetworkHook({
+      target: window,
+      config,
+      fetch: (async () => new Response(JSON.stringify({ data: { result: [
+        { bvid: 'BVbefore', pubdate: 1546300800 },
+        { bvid: 'BVafter', pubdate: 1609459200 },
+      ] } }))) as typeof fetch,
+      filterVideoResponse: () => undefined,
+    });
+    const response = await window.fetch('https://api.bilibili.com/x/web-interface/wbi/search/type?keyword=test');
+    const body = await response.json() as { data: { result: Array<{ bvid: string }> } };
+    expect(body.data.result.map((item) => item.bvid)).toEqual(['BVbefore']);
+    handle.uninstall();
+  });
+});

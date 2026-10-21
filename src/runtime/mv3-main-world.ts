@@ -6,6 +6,7 @@
 import { installNetworkHook } from '../page/network-hook';
 import { scanRenderedMainVideo } from '../page/initial-state';
 import { matchSupportedRoute } from '../routes/match';
+import { getSearchRepagination } from './search-repagination';
 import type { FilterConfig } from '../core/types';
 import { resolveAutoAdvanceConfig } from '../core/auto-advance';
 import { configLog, devLog } from '../core/dev-log';
@@ -49,6 +50,7 @@ window.addEventListener('message', (event: MessageEvent) => {
 let currentConfig: FilterConfig | undefined;
 let configResolved = false;
 let hook: ReturnType<typeof installNetworkHook> | null = null;
+let repagination: ReturnType<typeof getSearchRepagination> | null = null;
 const pendingConfig: FilterConfig = { cutoffMinute: null, enabled: true, supplementBudget: 20, debug: false };
 const configReady = new Promise<FilterConfig>((resolve) => {
   window.addEventListener(CONFIG_EVENT, (event: Event) => {
@@ -56,6 +58,7 @@ const configReady = new Promise<FilterConfig>((resolve) => {
     if (!isConfig(config)) return;
     const effective = resolveAutoAdvanceConfig(config);
     currentConfig = effective;
+    repagination?.apply(effective);
     if (__TIME_FILTER_DEV__) devLog.log(configLog('config-bridged', effective, 'mv3-main-world'));
     scanRenderedMainVideo(document, effective.cutoffMinute, { enabled: effective.enabled }, window);
     if (!configResolved) {
@@ -72,19 +75,31 @@ function scanMainVideo(): void {
 
 
 function mountRoute(): void {
-  const supported = matchSupportedRoute(window.location).installHook;
-  if (!supported) return;
+  const route = matchSupportedRoute(window.location);
+  if (!route.installHook) return;
   scanMainVideo();
+  repagination = route.kind === 'search'
+    ? getSearchRepagination({
+      document,
+      target: window,
+      onNotice: () => emitMainWorldNotice('跨页补齐失败，已退回逐页过滤。', 'repagination-failed'),
+    })
+    : null;
   hook = installNetworkHook({
     target: window,
     getConfig: () => (configResolved && currentConfig ? resolveAutoAdvanceConfig(currentConfig) : configReady),
     onNotice: (reason) => emitMainWorldNotice('过滤器无法验证当前内容，相关内容已隐藏。', reason),
+    filterVideoResponse: repagination
+      ? (url, payload, config) => repagination?.transformVideo(url, payload, config)
+      : undefined,
   });
 }
 
 function unmountRoute(): void {
   hook?.uninstall();
   hook = null;
+  repagination?.destroy();
+  repagination = null;
 }
 
 mountRoute();

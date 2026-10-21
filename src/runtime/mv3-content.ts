@@ -6,6 +6,7 @@ import { matchSupportedRoute } from '../routes/match';
 import { createNativeSearchFilter } from './native-search-filter';
 import { resolveAutoAdvanceConfig } from '../core/auto-advance';
 import { configLog, devLog } from '../core/dev-log';
+import { createFavoriteHomeFillController, loadFavoriteFolders, type FavoriteHomeFillController } from './favorite-home-fill-controller';
 
 const STORAGE_KEY = 'bilibili-time-filter.config.v1';
 const BRIDGE_SOURCE = 'bilibili-time-filter';
@@ -25,6 +26,11 @@ function normaliseConfig(value: unknown): FilterPanelConfig {
     autoAdvanceStartedAt: Number.isFinite(input.autoAdvanceStartedAt) ? input.autoAdvanceStartedAt : null,
     autoAdvanceBaseCutoffMinute: typeof input.autoAdvanceBaseCutoffMinute === 'string' && input.autoAdvanceBaseCutoffMinute
       ? input.autoAdvanceBaseCutoffMinute : null,
+    favoriteHomeFillEnabled: input.favoriteHomeFillEnabled === true,
+    favoriteFolderIds: Array.isArray(input.favoriteFolderIds) ? input.favoriteFolderIds.filter((id): id is string => typeof id === 'string').slice(0, 10) : [],
+    favoriteFolderLimit: Number.isFinite(input.favoriteFolderLimit) ? Math.min(10, Math.max(1, Math.round(Number(input.favoriteFolderLimit)))) : 3,
+    favoriteVideoLimit: Number.isFinite(input.favoriteVideoLimit) ? Math.min(200, Math.max(1, Math.round(Number(input.favoriteVideoLimit)))) : 50,
+    favoriteRefreshRequestedAt: Number.isFinite(input.favoriteRefreshRequestedAt) ? input.favoriteRefreshRequestedAt : null,
   };
 }
 
@@ -62,6 +68,8 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     observe: true,
     onNotice: (reason) => { if (configReady) notices.show('过滤器无法验证当前内容，相关内容已隐藏。', reason); },
   });
+  const pageFetch = window.fetch ? window.fetch.bind(window) : undefined;
+  const favoriteFill: FavoriteHomeFillController = createFavoriteHomeFillController({ root: documentRef, config: current, fetch: pageFetch, onNotice: () => { if (configReady) notices.show('收藏标签补位失败，本轮已停止。', 'favorite-fill-failed'); } });
   let autoAdvanceTimer: number | undefined;
   const refreshAutoAdvance = (): void => {
     if (!configReady || !current.autoAdvance) return;
@@ -81,11 +89,14 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   panel = createFilterPanel({
     document: documentRef,
     config: current,
+    onFavoriteFoldersRefresh: pageFetch ? () => loadFavoriteFolders(pageFetch) : undefined,
+    onFavoriteTagsLoad: () => favoriteFill.getTags(),
     onChange: async (config) => {
       if (!configReady) return;
       current = resolveAutoAdvanceConfig(normaliseConfig(config));
       if (__TIME_FILTER_DEV__) devLog.log(configLog('config-changed', current, 'mv3-content'));
       controller.updateConfig(current);
+      favoriteFill?.updateConfig(current);
       nativeSearchFilter?.apply(current);
       await saveConfig(current);
       send(current);
@@ -105,6 +116,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     configReady = true;
     if (__TIME_FILTER_DEV__) devLog.log(configLog('config-loaded', current, 'mv3-content'));
     controller.updateConfig(current);
+    favoriteFill?.updateConfig(current);
     nativeSearchFilter?.apply(current);
     panel.update(current);
     send(current);
@@ -118,6 +130,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   return {
     destroy: () => {
       controller.disconnect();
+      favoriteFill?.disconnect();
       if (initialScanTimer !== undefined) window.clearTimeout(initialScanTimer);
       if (autoAdvanceTimer !== undefined) window.clearInterval(autoAdvanceTimer);
       nativeSearchFilter?.destroy();

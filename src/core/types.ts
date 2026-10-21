@@ -14,6 +14,20 @@ export interface FilterConfig {
   autoAdvanceStartedAt?: number | null;
   /** 自动推进启动时的截止时间，用于刷新页面后恢复进度。 */
   autoAdvanceBaseCutoffMinute?: string | null;
+  /** 首页收藏标签补位（默认关闭）。 */
+  favoriteHomeFillEnabled?: boolean;
+  favoriteFolderIds?: string[];
+  favoriteFolderLimit?: number;
+  favoriteVideoLimit?: number;
+  favoriteRefreshRequestedAt?: number | null;
+}
+
+/** 当前登录账号可选择的收藏夹元数据。 */
+export interface FavoriteFolderOption {
+  id: string;
+  title: string;
+  mediaCount?: number;
+  isDefault?: boolean;
 }
 
 export const DEFAULT_FILTER_CONFIG: Readonly<FilterConfig> = {
@@ -24,6 +38,11 @@ export const DEFAULT_FILTER_CONFIG: Readonly<FilterConfig> = {
   autoAdvance: false,
   autoAdvanceStartedAt: null,
   autoAdvanceBaseCutoffMinute: null,
+  favoriteHomeFillEnabled: false,
+  favoriteFolderIds: [],
+  favoriteFolderLimit: 3,
+  favoriteVideoLimit: 50,
+  favoriteRefreshRequestedAt: null,
 };
 
 export interface VideoRecord {
@@ -113,7 +132,8 @@ export type DiagnosticReason =
   | 'dynamic-decision'
   | 'supplement-plan'
   | 'supplement-start'
-  | 'supplement-success';
+  | 'supplement-success'
+  | 'repagination';
 
 export interface DiagnosticEvent {
   level: DiagnosticLevel;
