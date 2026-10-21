@@ -12,6 +12,7 @@ const supportedMatches = [
 const userScriptBanner = `// ==UserScript==
 // @name         B 站时光机
 // @namespace    https://github.com/bilibili-time-filter
+// @homepageURL  https://github.com/LeKZzzz/bilibili-time-machine
 // @version      0.1.1
 // @description  只显示早于本地截止时间的当前 B 站内容
 // @match        https://www.bilibili.com/*
@@ -70,7 +71,7 @@ function prependUserScriptMetadata(outDir: string): Plugin {
   return {
     name: 'prepend-userscript-metadata',
     closeBundle() {
-      const outputFile = resolve(outDir, 'bilibili-time-filter.user.js');
+      const outputFile = resolve(outDir, 'bilibili-time-machine.user.js');
       const code = readFileSync(outputFile, 'utf8');
       if (!code.includes('==UserScript==')) writeFileSync(outputFile, `${userScriptBanner}\n${code}`, 'utf8');
     },
@@ -96,7 +97,7 @@ export default defineConfig(({ mode }) => {
         rollupOptions: {
           input: resolve('userscript/entry.ts'),
           output: {
-            entryFileNames: 'bilibili-time-filter.user.js',
+            entryFileNames: 'bilibili-time-machine.user.js',
             inlineDynamicImports: true,
           },
         },
