@@ -2,6 +2,7 @@
   "name": "bilibili-time-machine",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "B 站按本地截止时间过滤当前页面内容的油猴脚本和 Chrome MV3 扩展",
   "type": "module",
   "scripts": {

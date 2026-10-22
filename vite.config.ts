@@ -15,6 +15,7 @@ const userScriptBanner = `// ==UserScript==
 // @homepageURL  https://github.com/LeKZzzz/bilibili-time-machine
 // @version      0.1.1
 // @description  只显示早于本地截止时间的当前 B 站内容
+// @license      MIT
 // @match        https://www.bilibili.com/*
 // @match        https://search.bilibili.com/*
 // @match        https://space.bilibili.com/*

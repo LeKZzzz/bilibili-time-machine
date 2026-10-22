@@ -134,4 +134,4 @@ npm run build:dev
 
 ## 许可证
 
-当前仓库尚未添加 `LICENSE` 文件。
+本项目采用 [MIT 许可证](LICENSE)。
