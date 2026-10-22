@@ -8,7 +8,8 @@ import { createNativeSearchFilter } from '../src/runtime/native-search-filter';
 import { getSearchRepagination, type SearchRepaginationHandle } from '../src/runtime/search-repagination';
 import { resolveAutoAdvanceConfig } from '../src/core/auto-advance';
 import { configLog, devLog } from '../src/core/dev-log';
-import { createFavoriteHomeFillController, loadFavoriteFolders, type FavoriteHomeFillController } from '../src/runtime/favorite-home-fill-controller';
+import { createFavoriteHomeFillController, type FavoriteHomeFillController } from '../src/runtime/favorite-home-fill-controller';
+import { createFavoriteFolderLoader } from '../src/runtime/favorite-folder-list';
 
 const STORAGE_KEY = 'bilibili-time-filter.config.v1';
 const BRIDGE_SOURCE = 'bilibili-time-filter';
@@ -91,6 +92,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   const pendingConfig: FilterPanelConfig = { ...DEFAULT_CONFIG, enabled: true, cutoffMinute: null };
   let current = pendingConfig;
   let configReady = false;
+  let mounted = true;
   const notices = createNoticeManager({ document: documentRef });
   const nativeSearchFilter = route.kind === 'search' ? createNativeSearchFilter(documentRef) : null;
   const repagination: SearchRepaginationHandle | null = route.kind === 'search'
@@ -104,7 +106,12 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     onNotice: (reason) => { if (configReady) notices.show('过滤器无法验证当前内容，相关内容已隐藏。', reason); },
   });
   const pageFetch = target.fetch ? target.fetch.bind(target) : undefined;
-  const favoriteFill: FavoriteHomeFillController = createFavoriteHomeFillController({ root: documentRef, config: current, fetch: pageFetch, onNotice: () => { if (configReady) notices.show('收藏标签补位失败，本轮已停止。', 'favorite-fill-failed'); } });
+  const favoriteFill: FavoriteHomeFillController = createFavoriteHomeFillController({
+    root: documentRef, config: current, fetch: pageFetch,
+    onNotice: () => { if (configReady) notices.show('收藏标签补位失败，本轮已停止。', 'favorite-fill-failed'); },
+    onSearchStateChange: (searching) => notices.setSearching(searching),
+  });
+  const loadFolders = pageFetch ? createFavoriteFolderLoader(pageFetch, () => mounted && configReady && current.favoriteHomeFillEnabled === true) : undefined;
   let autoAdvanceTimer: number | undefined;
   const refreshAutoAdvance = (): void => {
     if (!configReady || !current.autoAdvance) return;
@@ -139,7 +146,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   panel = createFilterPanel({
     document: documentRef,
     config: current,
-    onFavoriteFoldersRefresh: pageFetch ? () => loadFavoriteFolders(pageFetch) : undefined,
+    onFavoriteFoldersRefresh: loadFolders,
     onFavoriteTagsLoad: () => favoriteFill.getTags(),
     onChange: async (config) => {
       if (!configReady) return;
@@ -178,6 +185,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   });
   return {
     destroy: () => {
+      mounted = false;
       hook.uninstall();
       if (initialScanTimer !== undefined) target.clearTimeout(initialScanTimer);
       if (autoAdvanceTimer !== undefined) target.clearInterval(autoAdvanceTimer);

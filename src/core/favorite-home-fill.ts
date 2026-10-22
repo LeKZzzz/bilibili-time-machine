@@ -46,6 +46,8 @@ export interface FavoriteTagSnapshot {
   videos: FavoriteVideo[];
   tags: FavoriteTagScore[];
   updatedAt: number;
+  /** 生成快照时的每夹视频上限；旧快照缺少此值时重新读取。 */
+  videoLimit?: number;
   /** 每个标签下一轮搜索的页码，复用快照存储以便跨刷新继续。 */
   nextSearchPages?: Record<string, number>;
   /** 下一批优先参与补位的标签，避免少量空位始终由同一标签占用。 */
@@ -144,7 +146,6 @@ export function normalizeFavoriteFolders(payload: unknown): FavoriteFolderOption
     const isDefault = value.is_default === true || value.isDefault === true;
     result.push({ id, title, ...(mediaCount === undefined ? {} : { mediaCount }), ...(isDefault ? { isDefault: true } : {}) });
     seen.add(id);
-    if (result.length >= FAVORITE_MAX_FOLDERS) break;
   }
   return result;
 }

@@ -1,7 +1,8 @@
 import type { FavoriteFolderOption, FilterConfig } from '../core/types';
 import {
   createFavoriteHomeFillStore, createFavoriteSnapshot, normalizeFavoriteVideos, normalizeSearchCandidates,
-  normalizeFavoriteFolders, selectHomeFillCandidates, cleanSearchTitle, type FavoriteHomeFillConfig, type FavoriteStore, type FavoriteTagScore, type FavoriteVideo, type SearchCandidate,
+  normalizeFavoriteFolders, selectHomeFillCandidates, cleanSearchTitle, FAVORITE_MAX_FOLDERS, FAVORITE_MAX_VIDEOS_PER_FOLDER,
+  type FavoriteHomeFillConfig, type FavoriteStore, type FavoriteTagScore, type FavoriteTagSnapshot, type FavoriteVideo, type SearchCandidate,
 } from '../core/favorite-home-fill';
 
 export interface FavoriteHomeFillControllerOptions {
@@ -10,6 +11,8 @@ export interface FavoriteHomeFillControllerOptions {
   store?: FavoriteStore;
   fetch?: typeof fetch;
   onNotice?: (reason: 'favorite-fill-failed') => void;
+  /** 仅在本轮真正请求补位搜索端点期间为 true，供面板显示搜索提示。 */
+  onSearchStateChange?: (searching: boolean) => void;
   now?: () => number;
 }
 
@@ -276,29 +279,108 @@ export async function resolveBilibiliUid(request: typeof fetch): Promise<string 
   try { return readUid(await jsonFetch(request, 'https://api.bilibili.com/x/web-interface/nav')); } catch { return null; }
 }
 
-/** 读取当前登录账号可选择的收藏夹；接口结构变化时只返回空列表或抛出刷新错误。 */
-export async function loadFavoriteFolders(request: typeof fetch): Promise<FavoriteFolderOption[]> {
-  const uid = await resolveBilibiliUid(request);
-  if (!uid) throw new Error('uid unavailable');
-  const params = new URLSearchParams({ up_mid: uid, type: '0', web_location: '333.1387' });
-  let lastError: unknown = null;
-  let succeeded = false;
-  for (const path of ['created/list-all', 'created/list']) {
-    try {
-      const payload = await jsonFetch(request, `https://api.bilibili.com/x/v3/fav/folder/${path}?${params.toString()}`);
-      succeeded = true;
-      const folders = normalizeFavoriteFolders(payload);
-      if (folders.length > 0 || path === 'created/list') return folders;
-    } catch (error) {
-      lastError = error;
-    }
+const FAVORITE_FOLDER_PAGE_SIZE = 20;
+
+/** 列表接口的 data 容器；分页元数据与列表字段都从这里读取。 */
+function folderListData(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object') return {};
+  const root = payload as Record<string, unknown>;
+  return root.data && typeof root.data === 'object' && !Array.isArray(root.data)
+    ? root.data as Record<string, unknown>
+    : root;
+}
+
+/** 沿用核心规范化器的字段优先级，读取当前页的原始条数。 */
+function rawFolderItems(payload: unknown): unknown[] {
+  const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  if (Array.isArray(root.data)) return root.data;
+  const data = folderListData(payload);
+  for (const value of [data.list, data.folders, data.items, data.created, payload]) {
+    if (Array.isArray(value)) return value;
   }
-  if (succeeded) return [];
-  if (lastError) throw lastError;
   return [];
 }
 
-function selectedFolders(config: FavoriteHomeFillConfig): string[] { return (config.favoriteFolderIds ?? []).map(String).filter(Boolean).slice(0, Math.min(10, Math.max(1, config.favoriteFolderLimit ?? 3))); }
+function readFolderCount(payload: unknown): number | null {
+  const value = folderListData(payload).count;
+  const count = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(count) && count >= 0 ? Math.trunc(count) : null;
+}
+
+function readFolderHasMore(payload: unknown): boolean | null {
+  const value = folderListData(payload).has_more;
+  if (typeof value === 'boolean') return value;
+  if (value === 0 || value === 1) return value === 1;
+  return null;
+}
+
+/** 分页读取 created/list；按 has_more/count/短页结束，任一分页失败或关闭功能都会抛出。 */
+async function loadFavoriteFolderPages(
+  request: typeof fetch,
+  params: URLSearchParams,
+  isEnabled: () => boolean,
+): Promise<FavoriteFolderOption[]> {
+  const folders = new Map<string, FavoriteFolderOption>();
+  for (let page = 1; ; page += 1) {
+    if (!isEnabled()) throw new Error('favorite folder loading disabled');
+    const pageParams = new URLSearchParams(params);
+    pageParams.set('pn', String(page));
+    pageParams.set('ps', String(FAVORITE_FOLDER_PAGE_SIZE));
+    const payload = await jsonFetch(request, `https://api.bilibili.com/x/v3/fav/folder/created/list?${pageParams.toString()}`);
+    const items = rawFolderItems(payload);
+    const before = folders.size;
+    for (const folder of normalizeFavoriteFolders(payload)) {
+      if (!folders.has(folder.id)) folders.set(folder.id, folder);
+    }
+    const hasMore = readFolderHasMore(payload);
+    const count = readFolderCount(payload);
+    if (hasMore === false || items.length === 0 || folders.size === before) {
+      if ((count !== null && folders.size < count) || (hasMore === true && folders.size === before)) {
+        throw new Error('incomplete favorite folder list');
+      }
+      break;
+    }
+    if (hasMore !== true) {
+      // 没有 has_more 时优先用 count 判断是否取全，其次才用短页作为结束信号。
+      if (count !== null && count > 0 ? folders.size >= count : items.length < FAVORITE_FOLDER_PAGE_SIZE) break;
+    }
+  }
+  return [...folders.values()];
+}
+
+/**
+ * 读取当前登录账号创建的全部收藏夹。
+ * uid 已知时可直接传入以避免重复请求 nav；enabled 用于在关闭功能后阻止继续分页。
+ */
+export async function loadFavoriteFolders(
+  request: typeof fetch,
+  uid?: string | null,
+  isEnabled: () => boolean = () => true,
+): Promise<FavoriteFolderOption[]> {
+  if (!isEnabled()) throw new Error('favorite folder loading disabled');
+  const resolvedUid = uid ?? await resolveBilibiliUid(request);
+  if (!resolvedUid) throw new Error('uid unavailable');
+  if (!isEnabled()) throw new Error('favorite folder loading disabled');
+  const params = new URLSearchParams({ up_mid: resolvedUid, type: '0', web_location: '333.1387' });
+  try {
+    const payload = await jsonFetch(request, `https://api.bilibili.com/x/v3/fav/folder/created/list-all?${params.toString()}`);
+    const folders = normalizeFavoriteFolders(payload);
+    const count = readFolderCount(payload);
+    // list-all 明确给出的数量少于 count 时不能当作完整列表，改走分页回退。
+    if (folders.length > 0 && (count === null || folders.length >= count)) return folders;
+  } catch {
+    // list-all 不可用时回退到分页接口；分页接口负责提供完整列表或抛出错误。
+  }
+  if (!isEnabled()) throw new Error('favorite folder loading disabled');
+  return loadFavoriteFolderPages(request, params, isEnabled);
+}
+
+function selectedFolders(config: FavoriteHomeFillConfig): string[] {
+  const folders = (config.favoriteFolderIds ?? []).map(String).filter(Boolean);
+  const limit = Math.min(FAVORITE_MAX_FOLDERS, Math.max(1, config.favoriteFolderLimit ?? 3));
+  // 旧配置超出上限时等待用户调整，不只读取其中一部分。
+  return folders.length <= limit ? folders : [];
+}
 
 function selectionKey(config: FavoriteHomeFillConfig): string {
   return `${selectedFolders(config).join(',')}|limit=${config.favoriteFolderLimit ?? 3}|videos=${config.favoriteVideoLimit ?? 50}`;
@@ -310,28 +392,49 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
   let config = { ...options.config }; let disposed = false; let running: Promise<void> | null = null;
   let lastRefreshRequest = config.favoriteRefreshRequestedAt ?? null;
   let lastAttempt: string | null = null;
+  let scrollRound = 0;
   const cardIds = new WeakMap<Element, number>();
   let nextCardId = 0;
   const stateKey = (): string => `${selectionKey(config)}|enabled=${config.enabled}|cutoff=${config.cutoffMinute}|fill=${config.favoriteHomeFillEnabled}|refresh=${config.favoriteRefreshRequestedAt ?? ''}`;
-  const attemptKey = (): string => `${stateKey()}|${cards(documentRef).map((card) => {
+  const attemptKey = (): string => `${stateKey()}|scroll=${scrollRound}|${cards(documentRef).map((card) => {
     if (!cardIds.has(card)) cardIds.set(card, ++nextCardId);
     return `${cardIds.get(card)}:${bvidOf(card)}:${card.getAttribute('data-pubdate')}:${(card as HTMLElement).hidden || card.getAttribute('data-time-filter-hidden') === '1'}`;
   }).join('|')}`;
   const replacements = new Map<Element, FillReplacement>();
   const request = options.fetch ?? defaultFetch(documentRef); const store = options.store ?? createFavoriteHomeFillStore(); const now = options.now ?? (() => Date.now());
   const notify = () => options.onNotice?.('favorite-fill-failed');
-  const loadSnapshot = async (force = false): Promise<{ uid: string; snapshot: ReturnType<typeof createFavoriteSnapshot> }> => {
+  let searchActive = false;
+  /** 搜索提示只随实际搜索端点请求切换，重复设置同一状态不通知。 */
+  const setSearchActive = (value: boolean): void => {
+    if (searchActive === value) return;
+    searchActive = value;
+    options.onSearchStateChange?.(value);
+  };
+  const currentVideoLimit = (): number => {
+    const value = config.favoriteVideoLimit ?? 50;
+    const limit = typeof value === 'number' && Number.isFinite(value) ? value : 50;
+    return Math.min(FAVORITE_MAX_VIDEOS_PER_FOLDER, Math.max(1, Math.floor(limit)));
+  };
+  /** 选择或每夹视频上限变化后，旧快照不能继续沿用。 */
+  const snapshotMatches = (cached: FavoriteTagSnapshot | null, folders: string[], videoLimit: number): boolean => {
+    if (!cached || cached.videoLimit !== videoLimit) return false;
+    if (cached.folders.length !== folders.length) return false;
+    const cachedFolders = new Set(cached.folders);
+    return folders.every((folder) => cachedFolders.has(folder));
+  };
+  const loadSnapshot = async (): Promise<{ uid: string; snapshot: FavoriteTagSnapshot }> => {
     const folders = selectedFolders(config);
+    const videoLimit = currentVideoLimit();
     if (!folders.length || !request) throw new Error('favorite folders unavailable');
     const uid = await resolveBilibiliUid(request); if (!uid) throw new Error('uid unavailable');
     const refreshRequested = (config.favoriteRefreshRequestedAt ?? null) !== lastRefreshRequest;
     const cached = await store.getSnapshot(uid);
-    let snapshot = force || refreshRequested ? null : cached;
+    let snapshot = refreshRequested || !snapshotMatches(cached, folders, videoLimit) ? null : cached;
     if (refreshRequested) lastRefreshRequest = config.favoriteRefreshRequestedAt ?? null;
     if (!snapshot) {
       const videos: FavoriteVideo[] = [];
-      for (const folder of folders) videos.push(...await readFavoriteFolder(request, folder, config.favoriteVideoLimit ?? 50));
-      snapshot = createFavoriteSnapshot(uid, folders, videos, now());
+      for (const folder of folders) videos.push(...await readFavoriteFolder(request, folder, videoLimit));
+      snapshot = { ...createFavoriteSnapshot(uid, folders, videos, now()), videoLimit };
       if (cached?.nextSearchPages) snapshot.nextSearchPages = Object.fromEntries(snapshot.tags
         .filter(({ tag }) => cached.nextSearchPages?.[tag] !== undefined)
         .map(({ tag }) => [tag, cached.nextSearchPages![tag]]));
@@ -367,8 +470,7 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
     const runState = stateKey();
     running = (async () => {
       try {
-        const selectionChanged = runState !== stateKey();
-        const loaded = await loadSnapshot(selectionChanged);
+        const loaded = await loadSnapshot();
         const { uid, snapshot } = loaded;
         if (disposed || stateKey() !== runState || !config.enabled || !config.cutoffMinute || config.favoriteHomeFillEnabled !== true) return;
         let candidates = await store.getCandidates(uid); const history = await store.getHistory(uid);
@@ -386,14 +488,19 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
           && preferredTags.every(({ tag }) => selected.some((candidate) => candidate.sourceTag === tag));
         if (!enough(choose())) {
           let order = 0;
-          for (const score of searchTags) {
+          const pendingTags = [...searchTags];
+          const searchedTags = new Set<string>();
+          while (pendingTags.length && order < 5) {
+            const score = pendingTags.shift()!;
             const available = choose();
             if (enough(available)) break;
             // 数量足够时只补缺席标签的候选，不因第一个标签已填满而跳过其它来源。
-            if (available.length >= need && available.some((candidate) => candidate.sourceTag === score.tag)) continue;
+            if (available.length >= need && (searchedTags.has(score.tag) || available.some((candidate) => candidate.sourceTag === score.tag))) continue;
             if (disposed || stateKey() !== runState) return;
             // 旧缓存已包含该标签时从第二页继续，避免反复拉取已推送完的第一页。
             const page = snapshot.nextSearchPages?.[score.tag] ?? (candidates.some((candidate) => candidate.tags.includes(score.tag)) ? 2 : 1);
+            // 仅在实际发出搜索请求前通知一次；整轮搜索结束后统一关闭。
+            setSearchActive(true);
             const payload = await jsonFetch(request, `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(score.tag)}&page=${page}`);
             const fetched = normalizeSearchCandidates(payload, [score.tag], now());
             candidates = [...candidates, ...fetched]; await store.putCandidates(uid, fetched);
@@ -402,8 +509,12 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
             const nextPage = fetched.length === 0 || (Number.isFinite(totalPages) && totalPages > 0 && page >= totalPages) ? 1 : page + 1;
             snapshot.nextSearchPages = { ...snapshot.nextSearchPages, [score.tag]: nextPage };
             await store.putSnapshot(snapshot);
-            order += 1; if (order >= 5) break;
+            searchedTags.add(score.tag);
+            // 空位仍不足时继续轮询后续页；已到末页的标签留到下一轮再循环。
+            if (nextPage !== 1) pendingTags.push(score);
+            order += 1;
           }
+          setSearchActive(false);
         }
         if (disposed || stateKey() !== runState || !config.enabled || !config.cutoffMinute || config.favoriteHomeFillEnabled !== true) return;
         const selected = choose();
@@ -433,13 +544,47 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
           snapshot.nextSourceTag = topTags[(lastIndex + 1) % topTags.length].tag;
           await store.putSnapshot(snapshot);
         }
-      } catch { notify(); }
+      } catch {
+        // 搜索失败时先结束搜索提示，再交给现有失败提示。
+        setSearchActive(false);
+        notify();
+      }
       finally {
+        setSearchActive(false);
         running = null;
         if (!disposed && attemptKey() !== lastAttempt) void run();
       }
     })(); return running;
   };
+  const view = documentRef.defaultView;
+  let lastScrollY = view?.scrollY ?? 0;
+  let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+  let scrollAttempt: string | null = null;
+  const clearScrollRetry = (): void => {
+    if (scrollTimer !== null) clearTimeout(scrollTimer);
+    scrollTimer = null;
+    scrollAttempt = null;
+  };
+  const onScroll = (): void => {
+    const position = view?.scrollY ?? 0;
+    const downward = position > lastScrollY;
+    lastScrollY = position;
+    if (!downward || disposed || !config.enabled || !config.cutoffMinute || config.favoriteHomeFillEnabled !== true || !homePage(documentRef)) {
+      clearScrollRetry();
+      return;
+    }
+    if (scrollTimer === null) scrollAttempt = attemptKey();
+    else clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => {
+      const sameBatch = scrollAttempt === attemptKey();
+      clearScrollRetry();
+      // 新卡片或本轮补位已推进时交给原有链路，避免一次下滑重复触发两轮。
+      if (!sameBatch || !cards(documentRef).some((card) => (card as HTMLElement).hidden || card.getAttribute('data-time-filter-hidden') === '1')) return;
+      scrollRound += 1;
+      void run();
+    }, 200);
+  };
+  view?.addEventListener('scroll', onScroll, { passive: true });
   const observer = typeof MutationObserver !== 'undefined' ? new MutationObserver(() => {
     if (attemptKey() !== lastAttempt) void run();
   }) : null;
@@ -467,11 +612,17 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
       if (stateChanged) lastAttempt = null;
       if (stateChanged) restoreFillCards(!next.enabled || !next.cutoffMinute);
       config = { ...next };
-      if (config.favoriteHomeFillEnabled !== true) restoreFillCards(!config.enabled || !config.cutoffMinute);
-      else void run();
+      if (config.favoriteHomeFillEnabled !== true || !config.enabled) {
+        clearScrollRetry();
+        setSearchActive(false);
+        restoreFillCards(!config.enabled || !config.cutoffMinute);
+      } else void run();
     },
     disconnect() {
       disposed = true;
+      clearScrollRetry();
+      view?.removeEventListener('scroll', onScroll);
+      setSearchActive(false);
       observer?.disconnect();
       restoreFillCards();
     },

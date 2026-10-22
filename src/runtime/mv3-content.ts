@@ -6,7 +6,8 @@ import { matchSupportedRoute } from '../routes/match';
 import { createNativeSearchFilter } from './native-search-filter';
 import { resolveAutoAdvanceConfig } from '../core/auto-advance';
 import { configLog, devLog } from '../core/dev-log';
-import { createFavoriteHomeFillController, loadFavoriteFolders, type FavoriteHomeFillController } from './favorite-home-fill-controller';
+import { createFavoriteHomeFillController, type FavoriteHomeFillController } from './favorite-home-fill-controller';
+import { createFavoriteFolderLoader } from './favorite-folder-list';
 
 const STORAGE_KEY = 'bilibili-time-filter.config.v1';
 const BRIDGE_SOURCE = 'bilibili-time-filter';
@@ -57,6 +58,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   const pendingConfig: FilterPanelConfig = { ...DEFAULT_CONFIG, enabled: true, cutoffMinute: null };
   let current = pendingConfig;
   let configReady = false;
+  let mounted = true;
   const notices = createNoticeManager({ document: documentRef });
   const nativeSearchFilter = matchSupportedRoute(window.location).kind === 'search'
     ? createNativeSearchFilter(documentRef)
@@ -69,7 +71,12 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     onNotice: (reason) => { if (configReady) notices.show('过滤器无法验证当前内容，相关内容已隐藏。', reason); },
   });
   const pageFetch = window.fetch ? window.fetch.bind(window) : undefined;
-  const favoriteFill: FavoriteHomeFillController = createFavoriteHomeFillController({ root: documentRef, config: current, fetch: pageFetch, onNotice: () => { if (configReady) notices.show('收藏标签补位失败，本轮已停止。', 'favorite-fill-failed'); } });
+  const favoriteFill: FavoriteHomeFillController = createFavoriteHomeFillController({
+    root: documentRef, config: current, fetch: pageFetch,
+    onNotice: () => { if (configReady) notices.show('收藏标签补位失败，本轮已停止。', 'favorite-fill-failed'); },
+    onSearchStateChange: (searching) => notices.setSearching(searching),
+  });
+  const loadFolders = pageFetch ? createFavoriteFolderLoader(pageFetch, () => mounted && configReady && current.favoriteHomeFillEnabled === true) : undefined;
   let autoAdvanceTimer: number | undefined;
   const refreshAutoAdvance = (): void => {
     if (!configReady || !current.autoAdvance) return;
@@ -89,7 +96,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   panel = createFilterPanel({
     document: documentRef,
     config: current,
-    onFavoriteFoldersRefresh: pageFetch ? () => loadFavoriteFolders(pageFetch) : undefined,
+    onFavoriteFoldersRefresh: loadFolders,
     onFavoriteTagsLoad: () => favoriteFill.getTags(),
     onChange: async (config) => {
       if (!configReady) return;
@@ -129,6 +136,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   });
   return {
     destroy: () => {
+      mounted = false;
       controller.disconnect();
       favoriteFill?.disconnect();
       if (initialScanTimer !== undefined) window.clearTimeout(initialScanTimer);

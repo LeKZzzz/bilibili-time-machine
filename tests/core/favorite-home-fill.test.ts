@@ -100,6 +100,126 @@ describe('favorite home fill core', () => {
     expect(requested.some((url) => url.includes('up_mid=7'))).toBe(true);
   });
 
+  it('returns every created folder from list-all beyond the panel selection limit', async () => {
+    const list = Array.from({ length: 15 }, (_, index) => ({ id: index + 1, title: `收藏夹 ${index + 1}`, media_count: index }));
+    const fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      if (url.includes('/x/web-interface/nav')) return new Response(JSON.stringify({ code: 0, data: { mid: 7 } }), { status: 200 });
+      if (url.includes('/x/v3/fav/folder/created/list-all')) return new Response(JSON.stringify({ code: 0, data: { count: list.length, list } }), { status: 200 });
+      throw new Error(`unexpected request: ${url}`);
+    };
+    const { loadFavoriteFolders } = await import('../../src/runtime/favorite-home-fill-controller');
+    const folders = await loadFavoriteFolders(fetch as typeof globalThis.fetch);
+    expect(folders).toHaveLength(15);
+    expect(folders.map((folder) => folder.id)).toEqual(Array.from({ length: 15 }, (_, index) => String(index + 1)));
+  });
+
+  it('falls back to paginated folders when list-all is shorter than its count', async () => {
+    const requested: string[] = [];
+    const fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      requested.push(url);
+      if (url.includes('/x/web-interface/nav')) return new Response(JSON.stringify({ code: 0, data: { mid: 7 } }), { status: 200 });
+      if (url.includes('/x/v3/fav/folder/created/list-all')) {
+        return new Response(JSON.stringify({ code: 0, data: { count: 4, list: [{ id: 1, title: '夹 1' }, { id: 2, title: '夹 2' }] } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ code: 0, data: { count: 4, list: Array.from({ length: 4 }, (_, index) => ({ id: index + 1, title: `夹 ${index + 1}` })) } }), { status: 200 });
+    };
+    const { loadFavoriteFolders } = await import('../../src/runtime/favorite-home-fill-controller');
+    const folders = await loadFavoriteFolders(fetch as typeof globalThis.fetch);
+    expect(folders).toHaveLength(4);
+    expect(requested.some((url) => url.includes('/created/list?'))).toBe(true);
+  });
+
+  it('pages the fallback folder endpoint until has_more is false and de-duplicates ids', async () => {
+    const pages: string[] = [];
+    const fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      if (url.includes('/x/web-interface/nav')) return new Response(JSON.stringify({ code: 0, data: { mid: 7 } }), { status: 200 });
+      if (url.includes('/x/v3/fav/folder/created/list-all')) return new Response(JSON.stringify({ code: -404 }), { status: 200 });
+      if (url.includes('/x/v3/fav/folder/created/list')) {
+        const page = new URL(url).searchParams.get('pn')!;
+        pages.push(page);
+        const list = page === '1'
+          ? Array.from({ length: 20 }, (_, index) => ({ id: index + 1, title: `夹 ${index + 1}`, media_count: index }))
+          : [{ id: 20, title: '重复项' }, { id: 21, title: '夹 21' }, { id: 22, title: '夹 22' }];
+        return new Response(JSON.stringify({ code: 0, data: { count: 22, list, has_more: page === '1' } }), { status: 200 });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    };
+    const { loadFavoriteFolders } = await import('../../src/runtime/favorite-home-fill-controller');
+    const folders = await loadFavoriteFolders(fetch as typeof globalThis.fetch);
+    expect(pages).toEqual(['1', '2']);
+    expect(folders).toHaveLength(22);
+    expect(new Set(folders.map((folder) => folder.id)).size).toBe(22);
+    expect(folders.find((folder) => folder.id === '22')?.title).toBe('夹 22');
+  });
+
+  it('uses count to continue fallback pages that omit has_more', async () => {
+    const pages: string[] = [];
+    const fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      if (url.includes('/x/web-interface/nav')) return new Response(JSON.stringify({ code: 0, data: { mid: 7 } }), { status: 200 });
+      if (url.includes('/x/v3/fav/folder/created/list-all')) return new Response(JSON.stringify({ code: 0, data: { list: [] } }), { status: 200 });
+      if (url.includes('/x/v3/fav/folder/created/list')) {
+        const page = new URL(url).searchParams.get('pn')!;
+        pages.push(page);
+        const list = page === '1'
+          ? Array.from({ length: 10 }, (_, index) => ({ id: index + 1, title: `夹 ${index + 1}` }))
+          : Array.from({ length: 2 }, (_, index) => ({ id: index + 11, title: `夹 ${index + 11}` }));
+        return new Response(JSON.stringify({ code: 0, data: { count: 12, list } }), { status: 200 });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    };
+    const { loadFavoriteFolders } = await import('../../src/runtime/favorite-home-fill-controller');
+    const folders = await loadFavoriteFolders(fetch as typeof globalThis.fetch);
+    expect(pages).toEqual(['1', '2']);
+    expect(folders).toHaveLength(12);
+  });
+
+  it('rejects instead of returning a partial list when a fallback page fails', async () => {
+    const fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      if (url.includes('/x/web-interface/nav')) return new Response(JSON.stringify({ code: 0, data: { mid: 7 } }), { status: 200 });
+      if (url.includes('/x/v3/fav/folder/created/list-all')) return new Response(JSON.stringify({ code: 0, data: { list: [] } }), { status: 200 });
+      const page = new URL(url).searchParams.get('pn');
+      if (page === '1') {
+        return new Response(JSON.stringify({ code: 0, data: { count: 30, list: Array.from({ length: 10 }, (_, index) => ({ id: index + 1, title: `夹 ${index + 1}` })) } }), { status: 200 });
+      }
+      return new Response('', { status: 500 });
+    };
+    const { loadFavoriteFolders } = await import('../../src/runtime/favorite-home-fill-controller');
+    await expect(loadFavoriteFolders(fetch as typeof globalThis.fetch)).rejects.toThrow('request failed: 500');
+  });
+
+  it('stops requesting further folder pages once loading is disabled', async () => {
+    let enabled = true;
+    const pages: string[] = [];
+    const fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      if (url.includes('/x/web-interface/nav')) return new Response(JSON.stringify({ code: 0, data: { mid: 7 } }), { status: 200 });
+      if (url.includes('/x/v3/fav/folder/created/list-all')) return new Response(JSON.stringify({ code: 0, data: { list: [] } }), { status: 200 });
+      const page = new URL(url).searchParams.get('pn')!;
+      pages.push(page);
+      enabled = false;
+      return new Response(JSON.stringify({ code: 0, data: { count: 30, list: Array.from({ length: 10 }, (_, index) => ({ id: index + 1, title: `夹 ${index + 1}` })) } }), { status: 200 });
+    };
+    const { loadFavoriteFolders } = await import('../../src/runtime/favorite-home-fill-controller');
+    await expect(loadFavoriteFolders(fetch as typeof globalThis.fetch, null, () => enabled)).rejects.toThrow('favorite folder loading disabled');
+    expect(pages).toEqual(['1']);
+  });
+
+  it('does not accept a terminal fallback page that is shorter than the reported total', async () => {
+    const fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      if (url.includes('/nav')) return new Response(JSON.stringify({ code: 0, data: { mid: 7 } }));
+      if (url.includes('/list-all')) return new Response('', { status: 500 });
+      return new Response(JSON.stringify({ code: 0, data: { count: 2, has_more: false, list: [{ id: 1, title: '不完整的列表' }] } }));
+    };
+    const { loadFavoriteFolders } = await import('../../src/runtime/favorite-home-fill-controller');
+    await expect(loadFavoriteFolders(fetch as typeof globalThis.fetch)).rejects.toThrow('incomplete favorite folder list');
+  });
+
   it('clones a native card and marks its source accessibly', async () => {
     const { cloneHomeFillCard } = await import('../../src/runtime/favorite-home-fill-controller');
     const wrapper = document.createElement('div');
