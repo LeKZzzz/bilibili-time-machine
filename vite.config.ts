@@ -13,6 +13,7 @@ const userScriptBanner = `// ==UserScript==
 // @name         B 站时光机
 // @namespace    https://github.com/bilibili-time-filter
 // @homepageURL  https://github.com/LeKZzzz/bilibili-time-machine
+// @supportURL   https://github.com/LeKZzzz/bilibili-time-machine/issues
 // @version      0.1.1
 // @description  只显示早于本地截止时间的当前 B 站内容
 // @license      MIT
@@ -68,12 +69,24 @@ function copyManifest(outDir: string): Plugin {
   };
 }
 
-function prependUserScriptMetadata(outDir: string): Plugin {
+function prepareUserScriptOutput(outDir: string): Plugin {
   return {
-    name: 'prepend-userscript-metadata',
+    name: 'prepare-userscript-output',
     closeBundle() {
       const outputFile = resolve(outDir, 'bilibili-time-machine.user.js');
-      const code = readFileSync(outputFile, 'utf8');
+      let code = readFileSync(outputFile, 'utf8');
+      // 保留内联 CSS 的真实换行，避免发布站点将超长字符串误判为压缩代码。
+      for (const statement of this.parse(code).body) {
+        if (statement.type !== 'VariableDeclaration') continue;
+        for (const declaration of statement.declarations) {
+          if (declaration.id.type !== 'Identifier' || declaration.id.name !== 'panelStyle') continue;
+          const literal = declaration.init;
+          if (literal?.type !== 'Literal' || typeof literal.value !== 'string') continue;
+          const { start, end } = literal as typeof literal & { start: number; end: number };
+          const css = literal.value.replaceAll('\\', '\\\\').replaceAll('\r', '\\r').replaceAll('`', '\\`').replaceAll('${', '\\${');
+          code = `${code.slice(0, start)}\`${css}\`${code.slice(end)}`;
+        }
+      }
       if (!code.includes('==UserScript==')) writeFileSync(outputFile, `${userScriptBanner}\n${code}`, 'utf8');
     },
   };
@@ -94,6 +107,7 @@ export default defineConfig(({ mode }) => {
         emptyOutDir: true,
         sourcemap: false,
         cssCodeSplit: false,
+        cssMinify: false,
         minify: false,
         rollupOptions: {
           input: resolve('userscript/entry.ts'),
@@ -103,7 +117,7 @@ export default defineConfig(({ mode }) => {
           },
         },
       },
-      plugins: [prependUserScriptMetadata(variant.outDir)],
+      plugins: [prepareUserScriptOutput(variant.outDir)],
     };
   }
 

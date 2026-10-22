@@ -19,9 +19,19 @@
 
 ## 安装
 
-### 1. 从源码构建
+扩展与用户脚本任选其一，避免在同一页面重复运行。
 
-准备 Node.js 20/22 LTS 或兼容版本、npm 和 Git。公开发布的 `main` 分支不包含预先构建的 `dist/`，请先运行：
+### Tampermonkey 用户脚本（无需构建）
+
+1. 在浏览器中安装并启用 Tampermonkey。
+2. 打开 [Greasy Fork 发布页：B 站时光机](https://greasyfork.org/zh-CN/scripts/601594-b-%E7%AB%99%E6%97%B6%E5%85%89%E6%9C%BA)，点击“安装此脚本”，在 Tampermonkey 中确认安装。
+3. 刷新已打开的 B 站页面。
+
+升级用户脚本时，通过 Greasy Fork 发布页安装新版，或在 Tampermonkey 中检查更新。
+
+### Chrome 扩展或自行构建
+
+以下步骤用于从源码构建 Chrome 扩展或用户脚本，也可下载[自动构建](#自动构建)生成的产物。准备 Node.js 20/22 LTS 或兼容版本、npm 和 Git。公开发布的 `main` 分支不包含预先构建的 `dist/`，请先运行：
 
 ```sh
 git clone https://github.com/LeKZzzz/bilibili-time-machine.git
@@ -32,21 +42,19 @@ npm run build
 
 `npm run build` 会先执行类型检查和测试，再生成扩展与用户脚本。
 
-### 2. 选择一种安装方式
-
 **Chrome 扩展**
 
 1. 打开 Chrome 的扩展管理页，启用“开发者模式”。
 2. 点击“加载已解压的扩展程序”，选择项目中的 `dist/extension/` 目录。
 3. 刷新已打开的 B 站页面。
 
-**Tampermonkey 用户脚本**
+**手动安装自行构建的用户脚本**
 
 1. 在浏览器中安装 Tampermonkey。
 2. 在 Tampermonkey 管理面板中新建脚本，用 `dist/userscript/bilibili-time-machine.user.js` 的内容替换默认模板并保存。
 3. 刷新 B 站页面。
 
-两种方式任选其一，避免在同一页面重复运行。升级扩展时，重新构建后在扩展管理页点击“重新加载”，再刷新 B 站；升级用户脚本时，在脚本编辑器中替换为新的构建内容并保存。
+升级扩展时，重新构建后在扩展管理页点击“重新加载”，再刷新 B 站；升级自行构建的用户脚本时，在脚本编辑器中替换为新的构建内容并保存。
 
 ## 使用
 
@@ -131,6 +139,17 @@ npm run build:dev
 生产产物位于 `dist/extension/` 和 `dist/userscript/`；开发产物位于 `dist/dev/extension/` 和 `dist/dev/userscript/`。开发版自动向当前浏览器控制台输出带 `[时光机]` 前缀的脱敏日志，生产版不包含项目诊断日志。日志不上传，不包含响应正文、评论文本、Cookie 或完整 URL。
 
 欢迎通过 [Issues](https://github.com/LeKZzzz/bilibili-time-machine/issues) 反馈兼容性问题，提供浏览器版本、安装方式、页面类型、复现步骤和脱敏错误信息；提交修改时请附上相关验证结果。
+
+### 自动构建
+
+`.github/workflows/build.yml` 在每次推送到 GitHub 时运行，也可在 [Actions](https://github.com/LeKZzzz/bilibili-time-machine/actions) 中选择 **Build → Run workflow** 手动触发。工作流使用 Node.js 22，依次执行 `npm ci`、`npm run build`（含类型检查和全部测试）及 `npm run build:dev`，成功后上传两份构建产物：
+
+| Artifact | 内容 |
+| --- | --- |
+| `bilibili-time-machine-release` | 生产版扩展和用户脚本，不含项目诊断日志 |
+| `bilibili-time-machine-dev` | 开发版扩展和用户脚本，包含本地脱敏日志 |
+
+登录 GitHub，打开对应分支的一次成功运行，在 **Artifacts** 区域下载并解压。两份压缩包均包含 `extension/` 和 `userscript/`：Chrome 加载已解压扩展时选择 `extension/`，手动安装油猴脚本时使用 `userscript/bilibili-time-machine.user.js`。工作流只提供构建下载，不会自动推送代码、创建 Release 或发布到 Greasy Fork。
 
 ## 许可证
 
