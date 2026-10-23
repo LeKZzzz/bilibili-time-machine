@@ -59,7 +59,7 @@ describe('favorite home fill search lifecycle', () => {
       pages.push(page);
       return response({ page, numPages: 5, result: [{ bvid: `BVpage${page}`, title: `page ${page}`, pubdate: 1 }] });
     });
-    const first = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const first = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(first);
     await first.run();
     expect(document.querySelector('[data-favorite-home-fill]')?.getAttribute('data-bvid')).toBe('BVpage2');
@@ -68,7 +68,7 @@ describe('favorite home fill search lifecycle', () => {
     first.disconnect();
 
     renderHome();
-    const second = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const second = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(second);
     await second.run();
     expect(pages).toEqual([2, 3]);
@@ -84,7 +84,7 @@ describe('favorite home fill search lifecycle', () => {
       searches.push(url.searchParams.get('keyword')!);
       return response({ numPages: 0, result: [] });
     });
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(controller);
     await controller.run();
     const calls = request.mock.calls.length;
@@ -115,7 +115,7 @@ describe('favorite home fill search lifecycle', () => {
       pages.push(page);
       return response({ numPages: 10, result: [{ bvid: `BVpage${page}`, pubdate: page < 3 ? 2000000000 : 1 }] });
     });
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config, onSearchStateChange: (active) => states.push(active) });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config, onSearchStateChange: (active) => states.push(active) });
     controllers.push(controller);
     await controller.run();
     expect(pages).toEqual([1, 2, 3]);
@@ -132,7 +132,7 @@ describe('favorite home fill search lifecycle', () => {
       pages.push(page);
       return response({ numPages: 20, result: [{ bvid: `BVlate${page}`, pubdate: 2000000000 }] });
     });
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(controller);
     await controller.run();
     expect(pages).toEqual([1, 2, 3, 4, 5]);
@@ -169,7 +169,7 @@ describe('favorite home fill search lifecycle', () => {
       return response({ numPages: 1, result: [{ bvid: 'BVafterScroll', pubdate: 1 }] });
     });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(controller);
     const first = controller.run();
     await searching;
@@ -190,7 +190,7 @@ describe('favorite home fill search lifecycle', () => {
       searches += 1;
       return response({ result: [] });
     });
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(controller);
     await controller.run();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -224,7 +224,7 @@ describe('favorite home fill search lifecycle', () => {
       searches.push(tag);
       return response({ numPages: 5, result: Array.from({ length: 8 }, (_, index) => ({ bvid: `BV${tag}${index}`, pubdate: 1 })) });
     });
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(controller);
     await controller.run();
     expect(searches).toEqual(['a', 'b', 'c']);
@@ -249,7 +249,7 @@ describe('favorite home fill search lifecycle', () => {
       searches.push(tag);
       return response({ numPages: 5, result: [{ bvid: `BV${tag}0`, pubdate: 1 }] });
     });
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(controller);
     await controller.run();
     expect(searches).toEqual(['b']);
@@ -257,7 +257,7 @@ describe('favorite home fill search lifecycle', () => {
       .toEqual(['收藏标签补位：a', '收藏标签补位：b']);
   });
 
-  it('rotates the first tag across single-slot batches while keeping each tag search page', async () => {
+  it('records only the last two used rounds and reuses the selected tag cache', async () => {
     await store.putSnapshot(cachedSnapshot(['1'], [{ bvid: 'BVfavorite', tags: ['a', 'b', 'c'], favoritedAt: 1 }]));
     const searches: string[] = [];
     const request = vi.fn(async (input: RequestInfo | URL) => {
@@ -267,18 +267,18 @@ describe('favorite home fill search lifecycle', () => {
       searches.push(tag);
       return response({ numPages: 5, result: Array.from({ length: 3 }, (_, index) => ({ bvid: `BV${tag}${index}`, pubdate: 1 })) });
     });
-    for (const tag of ['a', 'b', 'c']) {
+    for (let index = 0; index < 3; index += 1) {
       renderHome();
-      const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+      const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
       controllers.push(controller);
       await controller.run();
-      expect(document.querySelector('[data-favorite-home-fill-label]')?.textContent).toBe(`收藏标签补位：${tag}`);
+      expect(document.querySelector('[data-favorite-home-fill-label]')?.textContent).toBe('收藏标签补位：a');
       controller.disconnect();
     }
-    expect(searches).toEqual(['a', 'b', 'c']);
+    expect(searches).toEqual(['a']);
     const snapshot = (await store.getSnapshot('7'))!;
-    expect(snapshot.nextSourceTag).toBe('a');
-    expect(snapshot.nextSearchPages).toEqual({ a: 2, b: 2, c: 2 });
+    expect(snapshot.recentTagRounds).toEqual([['a'], ['a']]);
+    expect(snapshot.nextSearchPages).toEqual({ a: 2 });
   });
 
   it('fills available videos within the budget when other tags have no usable result', async () => {
@@ -299,7 +299,7 @@ describe('favorite home fill search lifecycle', () => {
         ? Array.from({ length: 3 }, (_, index) => ({ bvid: `BVa${index}`, pubdate: 1 }))
         : [{ bvid: `BV${tag}late`, pubdate: 2000000000 }] });
     });
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(controller);
     await controller.run();
     expect(searches).toEqual(['a', 'b', 'c']);
@@ -311,7 +311,7 @@ describe('favorite home fill search lifecycle', () => {
     document.querySelector('[data-bvid="BVhidden"]')!.remove();
     document.body.insertAdjacentHTML('afterbegin', '<div class="bili-video-card" hidden data-time-filter-hidden="1"><div class="bili-video-card__skeleton"></div></div><div class="bili-video-card" data-favorite-home-fill="1"><span data-bvid="BVnested" hidden data-time-filter-hidden="1"></span></div>');
     const request = vi.fn(async () => response({ mid: 7 }));
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(controller);
     await controller.run();
     expect(request.mock.calls).toHaveLength(1);
@@ -325,7 +325,7 @@ describe('favorite home fill search lifecycle', () => {
       return new Response('', { status: 503 });
     });
     const onNotice = vi.fn();
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config, onNotice });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config, onNotice });
     controllers.push(controller);
     await controller.run();
     document.body.appendChild(document.createElement('span'));
@@ -349,7 +349,7 @@ describe('favorite home fill search lifecycle', () => {
       pages.push(page);
       return response({ page, numPages: 5, result: [{ bvid: `BVcycle${page}`, pubdate: 1 }] });
     });
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config: { ...config, favoriteHomeFillEnabled: false } });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config: { ...config, favoriteHomeFillEnabled: false } });
     controllers.push(controller);
     controller.updateConfig({ ...config, favoriteRefreshRequestedAt: Date.now() });
     await controller.run();
@@ -359,7 +359,7 @@ describe('favorite home fill search lifecycle', () => {
 
     for (const page of [1, 2]) {
       renderHome();
-      const next = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+      const next = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
       controllers.push(next);
       await next.run();
       expect(document.querySelector('[data-favorite-home-fill]')?.getAttribute('data-bvid')).toBe(`BVcycle${page}`);
@@ -382,7 +382,7 @@ describe('favorite home fill search lifecycle', () => {
       pages.push(page);
       return response({ page, result: page === 3 ? [] : [{ bvid: 'BVcycle1', pubdate: 1 }] });
     });
-    const first = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const first = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(first);
     await first.run();
     await first.run();
@@ -391,7 +391,7 @@ describe('favorite home fill search lifecycle', () => {
     first.disconnect();
 
     renderHome();
-    const second = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const second = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(second);
     await second.run();
     expect(pages).toEqual([3, 1]);
@@ -412,7 +412,7 @@ describe('favorite home fill search lifecycle', () => {
       return response({ numPages: 0, result: [] });
     });
     const controller = createFavoriteHomeFillController({
-      root: document, store, fetch: request as typeof fetch,
+      root: document, rng: () => 0, store, fetch: request as typeof fetch,
       config: { ...config, favoriteFolderIds: ['2'] },
     });
     controllers.push(controller);
@@ -433,7 +433,7 @@ describe('favorite home fill search lifecycle', () => {
       }
       return response({ numPages: 0, result: [] });
     });
-    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
     controllers.push(controller);
     await controller.run();
     expect(folderIds).toEqual([]);
@@ -462,7 +462,7 @@ describe('favorite home fill search lifecycle', () => {
       return response({ numPages: 0, result: [] });
     });
     const controller = createFavoriteHomeFillController({
-      root: document, store, fetch: request as typeof fetch,
+      root: document, rng: () => 0, store, fetch: request as typeof fetch,
       config: { ...config, favoriteVideoLimit: 2 },
     });
     controllers.push(controller);
@@ -480,7 +480,7 @@ describe('favorite home fill search lifecycle', () => {
       return response({ numPages: 0, result: [{ bvid: 'BVsearch', title: 'search', pubdate: 1 }] });
     });
     const controller = createFavoriteHomeFillController({
-      root: document, store, fetch: request as typeof fetch, config,
+      root: document, rng: () => 0, store, fetch: request as typeof fetch, config,
       onSearchStateChange: (searching) => states.push(searching),
     });
     controllers.push(controller);
@@ -498,7 +498,7 @@ describe('favorite home fill search lifecycle', () => {
       return new Response('', { status: 500 });
     });
     const controller = createFavoriteHomeFillController({
-      root: document, store, fetch: request as typeof fetch, config,
+      root: document, rng: () => 0, store, fetch: request as typeof fetch, config,
       onSearchStateChange: (searching) => states.push(searching),
     });
     controllers.push(controller);
@@ -515,7 +515,7 @@ describe('favorite home fill search lifecycle', () => {
       return new Response('', { status: 503 });
     });
     const controller = createFavoriteHomeFillController({
-      root: document, store, fetch: request as typeof fetch, config,
+      root: document, rng: () => 0, store, fetch: request as typeof fetch, config,
       onSearchStateChange: (searching) => events.push(searching ? 'search:true' : 'search:false'),
       onNotice: () => events.push('notice'),
     });
@@ -536,7 +536,7 @@ describe('favorite home fill search lifecycle', () => {
       return pending;
     });
     const controller = createFavoriteHomeFillController({
-      root: document, store, fetch: request as typeof fetch, config,
+      root: document, rng: () => 0, store, fetch: request as typeof fetch, config,
       onSearchStateChange: (searching) => { states.push(searching); if (searching) started(); },
     });
     controllers.push(controller);
@@ -561,7 +561,7 @@ describe('favorite home fill search lifecycle', () => {
       return pending;
     });
     const controller = createFavoriteHomeFillController({
-      root: document, store, fetch: request as typeof fetch, config,
+      root: document, rng: () => 0, store, fetch: request as typeof fetch, config,
       onSearchStateChange: (searching) => { states.push(searching); if (searching) started(); },
     });
     controllers.push(controller);
@@ -584,7 +584,7 @@ describe('favorite home fill search lifecycle', () => {
       return response({ numPages: 0, result: [{ bvid: 'BVsearch', pubdate: 1 }] });
     });
     const controller = createFavoriteHomeFillController({
-      root: document, store, fetch: request as typeof fetch, config,
+      root: document, rng: () => 0, store, fetch: request as typeof fetch, config,
       onSearchStateChange: (searching) => {
         states.push(searching);
         if (searching) {
@@ -608,7 +608,7 @@ describe('favorite home fill search lifecycle', () => {
   it('does not silently read only a subset of saved folders that exceed the selection limit', async () => {
     const request = vi.fn();
     const controller = createFavoriteHomeFillController({
-      root: document, store, fetch: request as typeof fetch,
+      root: document, rng: () => 0, store, fetch: request as typeof fetch,
       config: { ...config, favoriteFolderIds: ['1', '2'], favoriteFolderLimit: 1 },
     });
     controllers.push(controller);
@@ -616,4 +616,405 @@ describe('favorite home fill search lifecycle', () => {
     expect(request).not.toHaveBeenCalled();
     expect(document.querySelector('[data-favorite-home-fill]')).toBeNull();
   });
+  it('aborts a pending account lookup without starting collection or saving late results', async () => {
+    let release!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    let signal: AbortSignal | null | undefined;
+    const request = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => { signal = init?.signal; return pending; });
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch,
+      config: { ...config, favoriteRefreshRequestedAt: Date.now() + 100 } });
+    controllers.push(controller);
+    const work = controller.run();
+    controller.updateConfig({ ...config, favoriteHomeFillEnabled: false });
+    expect(signal?.aborted).toBe(true);
+    release(response({ mid: 7 }));
+    await work;
+    expect(request).toHaveBeenCalledTimes(1);
+    expect((await store.getSnapshot('7'))?.tags[0].tag).toBe('游戏');
+    expect(controller.getState().reason).toBe('disabled');
+  });
+
+  it('updates preferences while paused on a video page and getTags never starts a refresh', async () => {
+    window.history.replaceState({}, '', '/video/BVtest');
+    let collections = 0;
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/nav')) return response({ mid: 7 });
+      collections += 1;
+      return response({ medias: [{ bvid: 'BVnewFavorite', tags: ['新偏好'] }] });
+    });
+    try {
+      const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch,
+        config: { ...config, enabled: false, favoriteRefreshRequestedAt: Date.now() + 100 } });
+      controllers.push(controller);
+      await controller.run();
+      expect(collections).toBe(1);
+      expect(controller.getState()).toMatchObject({ phase: 'ready', reason: 'paused', sourceCount: 1, tagCount: 1 });
+      expect((await controller.getTags())[0].tag).toBe('新偏好');
+      expect(collections).toBe(1);
+      expect(document.querySelector('[data-favorite-home-fill]')).toBeNull();
+    } finally { window.history.replaceState({}, '', '/'); }
+  });
+
+  it('rechecks native BVs after search and releases candidates that were not displayed', async () => {
+    let release!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const searching = new Promise<void>((resolve) => { started = resolve; });
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/nav')) return response({ mid: 7 });
+      started(); return pending;
+    });
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    controllers.push(controller);
+    const work = controller.run();
+    await searching;
+    document.body.insertAdjacentHTML('beforeend', '<div class="bili-video-card" data-bvid="BVnative"><a href="/video/BVnative">native</a></div>');
+    release(response({ numPages: 1, result: [{ bvid: 'BVnative', pubdate: 1 }] }));
+    await work;
+    expect(document.querySelectorAll('[data-bvid="BVnative"]')).toHaveLength(1);
+    expect(await store.getHistory('7')).toEqual([]);
+  });
+
+  it('releases a claim when its target disappears during the atomic claim', async () => {
+    await store.putCandidates('7', normalizeSearchCandidates({ data: { result: [{ bvid: 'BVcached', pubdate: 1 }] } }, ['游戏']));
+    const claim = store.claimHistory.bind(store);
+    const alteredStore = { ...store, claimHistory: async (...args: Parameters<typeof store.claimHistory>) => {
+      const result = await claim(...args);
+      document.querySelector('[data-bvid="BVhidden"]')?.remove();
+      return result;
+    } };
+    const controller = createFavoriteHomeFillController({ root: document, store: alteredStore,
+      fetch: vi.fn(async () => response({ mid: 7 })) as typeof fetch, config });
+    controllers.push(controller);
+    await controller.run();
+    expect(document.querySelector('[data-favorite-home-fill]')).toBeNull();
+    expect(await store.getHistory('7')).toEqual([]);
+  });
+
+  it('rolls back inserted cards and claims when persisting the completed round fails', async () => {
+    await store.putCandidates('7', normalizeSearchCandidates({ data: { result: [{ bvid: 'BVcached', pubdate: 1 }] } }, ['游戏']));
+    const alteredStore = { ...store, putSnapshot: vi.fn(async () => { throw new Error('storage unavailable'); }) };
+    const controller = createFavoriteHomeFillController({ root: document, store: alteredStore,
+      fetch: vi.fn(async () => response({ mid: 7 })) as typeof fetch, config });
+    controllers.push(controller);
+    await controller.run();
+    expect(document.querySelector('[data-favorite-home-fill]')).toBeNull();
+    expect(document.querySelector('[data-bvid="BVhidden"]')).not.toBeNull();
+    expect(await store.getHistory('7')).toEqual([]);
+    expect(controller.getState()).toMatchObject({ phase: 'error', errorStage: 'storage' });
+  });
+
+  it('only enriches the remaining ten videos on the second fixed-size favorite page', async () => {
+    let details = 0;
+    const sizes: string[] = [];
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/nav')) return response({ mid: 7 });
+      if (url.pathname.includes('/fav/resource/list')) {
+        sizes.push(url.searchParams.get('ps')!);
+        const page = url.searchParams.get('pn');
+        return response({ has_more: true, medias: Array.from({ length: 40 }, (_, i) => ({ bvid: `BVpage${page}item${i}` })) });
+      }
+      if (url.pathname.includes('/view/detail')) { details += 1; return response({ Tags: [{ tag_name: '游戏' }] }); }
+      return response({ result: [] });
+    });
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch,
+      config: { ...config, enabled: false, favoriteVideoLimit: 50, favoriteRefreshRequestedAt: Date.now() + 100 } });
+    controllers.push(controller);
+    await controller.run();
+    expect(sizes).toEqual(['40', '40']);
+    expect(details).toBe(50);
+    expect((await store.getSnapshot('7'))?.videos).toHaveLength(50);
+  });
+
+  it('retains existing preferences and reports malformed collection responses', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => String(input).includes('/nav') ? response({ mid: 7 }) : response({ unexpected: [] }));
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch,
+      config: { ...config, favoriteRefreshRequestedAt: Date.now() + 100 } });
+    controllers.push(controller);
+    await controller.run();
+    expect(controller.getState()).toMatchObject({ phase: 'error', errorStage: 'preferences', hasCachedPreferences: true });
+    expect((await store.getSnapshot('7'))?.tags[0].tag).toBe('游戏');
+  });
+
+  it.each(['missing', 'different-folders', 'different-limit', 'empty-tags', 'invalid-score'] as const)(
+    'does not report usable cached preferences after refresh failure with %s cache', async (scenario) => {
+      if (scenario === 'missing') await store.clear();
+      if (scenario === 'empty-tags' || scenario === 'invalid-score') {
+        const snapshot = (await store.getSnapshot('7'))!;
+        snapshot.tags = scenario === 'empty-tags' ? [] : snapshot.tags.map((tag) => ({ ...tag, score: 0 }));
+        await store.putSnapshot(snapshot);
+      }
+      const request = vi.fn(async (input: RequestInfo | URL) => String(input).includes('/nav') ? response({ mid: 7 }) : response({ unexpected: [] }));
+      const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch,
+        config: { ...config, favoriteRefreshRequestedAt: Date.now() + 100,
+          ...(scenario === 'different-folders' ? { favoriteFolderIds: ['2'] } : {}),
+          ...(scenario === 'different-limit' ? { favoriteVideoLimit: 2 } : {}),
+        } });
+      controllers.push(controller);
+      await controller.run();
+      expect(controller.getState()).toMatchObject({ phase: 'error', errorStage: 'preferences', hasCachedPreferences: false });
+      if (scenario === 'different-folders' || scenario === 'different-limit') {
+        expect((await store.getSnapshot('7'))?.tags[0].tag).toBe('游戏');
+      }
+    },
+  );
+
+  it('preserves existing fill cards when effective cutoff advances', async () => {
+    await store.putCandidates('7', normalizeSearchCandidates({ data: { result: [{ bvid: 'BVcached', pubdate: 1 }] } }, ['游戏']));
+    const controller = createFavoriteHomeFillController({ root: document, store,
+      fetch: vi.fn(async () => response({ mid: 7 })) as typeof fetch, config });
+    controllers.push(controller);
+    await controller.run();
+    const card = document.querySelector('[data-favorite-home-fill]');
+    controller.updateConfig({ ...config, cutoffMinute: '2020-01-01T00:01' });
+    await controller.run();
+    expect(document.querySelector('[data-favorite-home-fill]')).toBe(card);
+  });
+
+  it.each([-1, 0])('finishes one preference read across cutoff advances and checks the latest boundary (%s seconds)', async (offset) => {
+    const latestCutoff = '2020-01-01T00:03';
+    const pubdate = new Date(latestCutoff).getTime() / 1000 + offset;
+    await store.putCandidates('7', normalizeSearchCandidates({ data: { result: [{ bvid: 'BVboundary', pubdate }] } }, ['新偏好']));
+    let release!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const reading = new Promise<void>((resolve) => { started = resolve; });
+    let signal: AbortSignal | null | undefined;
+    let accounts = 0;
+    let collections = 0;
+    let searches = 0;
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/nav')) { accounts += 1; return response({ mid: 7 }); }
+      if (String(input).includes('/fav/resource/list')) {
+        collections += 1;
+        signal = init?.signal;
+        started();
+        return pending;
+      }
+      searches += 1;
+      return response({ result: [] });
+    });
+    const refreshConfig = { ...config, favoriteRefreshRequestedAt: Date.now() + 100 };
+    const controller = createFavoriteHomeFillController({ root: document, store, rng: () => 0, fetch: request as typeof fetch, config: refreshConfig });
+    controllers.push(controller);
+    const work = controller.run();
+    await reading;
+    for (const minute of ['01', '02', '03']) {
+      controller.updateConfig({ ...refreshConfig, cutoffMinute: `2020-01-01T00:${minute}` });
+      await Promise.resolve();
+      expect(signal?.aborted).toBe(false);
+    }
+    expect(accounts).toBe(1);
+    expect(collections).toBe(1);
+    release(response({ medias: [{ bvid: 'BVfavorite', tags: ['新偏好'] }] }));
+    await work;
+    expect(accounts).toBe(1);
+    expect(collections).toBe(1);
+    expect((await store.getSnapshot('7'))?.tags[0].tag).toBe('新偏好');
+    expect(document.querySelectorAll('[data-favorite-home-fill]')).toHaveLength(offset < 0 ? 1 : 0);
+    expect((await store.getHistory('7')).map(({ bvid }) => bvid)).toEqual(offset < 0 ? ['BVboundary'] : []);
+    expect(searches).toBeLessThanOrEqual(5);
+    if (offset < 0) expect(searches).toBe(0);
+  });
+
+  it.each(['not-home', 'paused', 'no-cutoff-change', 'no-cutoff-same'] as const)(
+    'keeps the pending preference state across cutoff synchronization in %s', async (scenario) => {
+      let release!: (value: Response) => void;
+      const pending = new Promise<Response>((resolve) => { release = resolve; });
+      let started!: () => void;
+      const reading = new Promise<void>((resolve) => { started = resolve; });
+      let signal: AbortSignal | null | undefined;
+      let accounts = 0;
+      let collections = 0;
+      const phases: string[] = [];
+      const putSnapshot = vi.fn(store.putSnapshot.bind(store));
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('/nav')) { accounts += 1; return response({ mid: 7 }); }
+        collections += 1;
+        signal = init?.signal;
+        started();
+        return pending;
+      });
+      const refreshConfig = { ...config, favoriteRefreshRequestedAt: Date.now() + 100,
+        enabled: scenario !== 'paused',
+        cutoffMinute: scenario === 'no-cutoff-same' ? null : config.cutoffMinute,
+      };
+      if (scenario === 'not-home') window.history.replaceState({}, '', '/video/BVtest');
+      try {
+        const controller = createFavoriteHomeFillController({ root: document, store: { ...store, putSnapshot },
+          fetch: request as typeof fetch, config: refreshConfig, onStateChange: ({ phase }) => phases.push(phase) });
+        controllers.push(controller);
+        const work = controller.run();
+        await reading;
+        expect(controller.getState().phase).toBe('updating');
+        const synchronized = { ...refreshConfig,
+          cutoffMinute: scenario.startsWith('no-cutoff') ? null : '2020-01-01T00:01',
+        };
+        controller.updateConfig(synchronized);
+        controller.updateConfig(synchronized);
+        await Promise.resolve();
+        expect(controller.getState().phase).toBe('updating');
+        expect(phases).toEqual(['updating']);
+        expect(signal?.aborted).toBe(false);
+        expect(accounts).toBe(1);
+        expect(collections).toBe(1);
+        expect(putSnapshot).not.toHaveBeenCalled();
+        release(response({ medias: [{ bvid: 'BVfavorite', tags: ['新偏好'] }] }));
+        await work;
+        const reason = scenario.startsWith('no-cutoff') ? 'no-cutoff' : scenario;
+        expect(controller.getState()).toMatchObject({ phase: 'ready', reason });
+        expect(phases).toEqual(['updating', 'ready']);
+        expect(putSnapshot).toHaveBeenCalledOnce();
+        expect((await store.getSnapshot('7'))?.tags[0].tag).toBe('新偏好');
+        expect(accounts).toBe(1);
+        expect(collections).toBe(1);
+      } finally { window.history.replaceState({}, '', '/'); }
+    },
+  );
+
+  it.each(['disable', 'source', 'limit', 'disconnect'] as const)('still cancels preference reads on %s after a cutoff-only update', async (action) => {
+    let release!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const reading = new Promise<void>((resolve) => { started = resolve; });
+    let signal: AbortSignal | null | undefined;
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/nav')) return response({ mid: 7 });
+      signal = init?.signal;
+      started();
+      return pending;
+    });
+    const refreshConfig = { ...config, favoriteRefreshRequestedAt: Date.now() + 100 };
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config: refreshConfig });
+    controllers.push(controller);
+    const work = controller.run();
+    await reading;
+    const advanced = { ...refreshConfig, cutoffMinute: '2020-01-01T00:01' };
+    controller.updateConfig(advanced);
+    expect(signal?.aborted).toBe(false);
+    if (action === 'disconnect') controller.disconnect();
+    else controller.updateConfig({ ...advanced,
+      ...(action === 'disable' ? { favoriteHomeFillEnabled: false } : {}),
+      ...(action === 'source' ? { favoriteFolderIds: ['2'] } : {}),
+      ...(action === 'limit' ? { favoriteVideoLimit: 2 } : {}),
+    });
+    expect(signal?.aborted).toBe(true);
+    controller.disconnect();
+    release(response({ medias: [{ bvid: 'BVcancelled', tags: ['迟到偏好'] }] }));
+    await work;
+    expect((await store.getSnapshot('7'))?.tags[0].tag).toBe('游戏');
+    expect(document.querySelector('[data-favorite-home-fill]')).toBeNull();
+  });
+
+  it('merges repeated continue clicks into one bounded round', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => String(input).includes('/nav') ? response({ mid: 7 }) : response({ result: [] }));
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    controllers.push(controller);
+    await controller.run();
+    const before = request.mock.calls.length;
+    await Promise.all([controller.continueFinding(), controller.continueFinding(), controller.continueFinding()]);
+    expect(request.mock.calls.length - before).toBe(2);
+  });
+
+  it('does not leak partial search pages or recent tags into the cached snapshot after cancellation', async () => {
+    let release!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const secondSearch = new Promise<void>((resolve) => { started = resolve; });
+    let searches = 0;
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/nav')) return response({ mid: 7 });
+      searches += 1;
+      if (searches === 2) { started(); return pending; }
+      return response({ numPages: 5, result: [{ bvid: 'BVtooLate', pubdate: 2000000000 }] });
+    });
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    controllers.push(controller);
+    const work = controller.run();
+    await secondSearch;
+    controller.updateConfig({ ...config, favoriteHomeFillEnabled: false });
+    release(response({ numPages: 5, result: [{ bvid: 'BVcancelled', pubdate: 1 }] }));
+    await work;
+    const snapshot = (await store.getSnapshot('7'))!;
+    expect(snapshot.nextSearchPages).toBeUndefined();
+    expect(snapshot.recentTagRounds).toBeUndefined();
+    expect(await store.getHistory('7')).toEqual([]);
+  });
+
+  it('stops starting detail requests when disconnected during enrichment', async () => {
+    let release!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const detailing = new Promise<void>((resolve) => { started = resolve; });
+    let details = 0;
+    const signals: AbortSignal[] = [];
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/nav')) return response({ mid: 7 });
+      if (String(input).includes('/fav/resource/list')) return response({ medias: Array.from({ length: 10 }, (_, i) => ({ bvid: `BVdetail${i}` })) });
+      details += 1;
+      if (init?.signal) signals.push(init.signal);
+      if (details === 3) started();
+      return pending;
+    });
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch,
+      config: { ...config, favoriteVideoLimit: 10, favoriteRefreshRequestedAt: Date.now() + 100 } });
+    controllers.push(controller);
+    const work = controller.run();
+    await detailing;
+    controller.disconnect();
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    release(response({ Tags: [{ tag_name: '取消详情' }] }));
+    await work;
+    expect(details).toBe(3);
+    expect((await store.getSnapshot('7'))?.tags[0].tag).toBe('游戏');
+  });
+
+  it('reports malformed search responses without claiming empty success', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => String(input).includes('/nav') ? response({ mid: 7 }) : response({ unexpected: [] }));
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    controllers.push(controller);
+    await controller.run();
+    expect(controller.getState()).toMatchObject({ phase: 'error', errorStage: 'search', hasCachedPreferences: true });
+    expect(document.querySelector('[data-favorite-home-fill]')).toBeNull();
+  });
+
+  it('prioritizes setting the missing cutoff over resuming a paused filter', async () => {
+    const request = vi.fn();
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch,
+      config: { ...config, enabled: false, cutoffMinute: null } });
+    controllers.push(controller);
+    await controller.run();
+    expect(controller.getState()).toMatchObject({ phase: 'idle', reason: 'no-cutoff' });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('keeps a newly saved preference snapshot unchanged when its first search round is cancelled', async () => {
+    await store.clear();
+    let release!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const secondSearch = new Promise<void>((resolve) => { started = resolve; });
+    let searches = 0;
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/nav')) return response({ mid: 7 });
+      if (String(input).includes('/fav/resource/list')) return response({ medias: [{ bvid: 'BVfavorite', tags: ['游戏'] }] });
+      searches += 1;
+      if (searches === 2) { started(); return pending; }
+      return response({ numPages: 5, result: [{ bvid: 'BVtooLate', pubdate: 2000000000 }] });
+    });
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    controllers.push(controller);
+    const work = controller.run();
+    await secondSearch;
+    controller.updateConfig({ ...config, favoriteHomeFillEnabled: false });
+    release(response({ numPages: 5, result: [{ bvid: 'BVcancelled', pubdate: 1 }] }));
+    await work;
+    const snapshot = (await store.getSnapshot('7'))!;
+    expect(snapshot.tags[0].tag).toBe('游戏');
+    expect(snapshot.nextSearchPages).toEqual({});
+    expect(snapshot.recentTagRounds).toEqual([]);
+    expect(await store.getHistory('7')).toEqual([]);
+  });
+
 });

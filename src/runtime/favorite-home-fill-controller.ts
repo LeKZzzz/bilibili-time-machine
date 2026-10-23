@@ -1,9 +1,21 @@
+import { classifyVideo } from '../core/video';
 import type { FavoriteFolderOption, FilterConfig } from '../core/types';
 import {
   createFavoriteHomeFillStore, createFavoriteSnapshot, normalizeFavoriteVideos, normalizeSearchCandidates,
-  normalizeFavoriteFolders, selectHomeFillCandidates, cleanSearchTitle, FAVORITE_MAX_FOLDERS, FAVORITE_MAX_VIDEOS_PER_FOLDER,
+  normalizeFavoriteFolders, sampleFavoriteTags, selectHomeFillCandidates, cleanSearchTitle, FAVORITE_MAX_FOLDERS, FAVORITE_MAX_VIDEOS_PER_FOLDER,
   type FavoriteHomeFillConfig, type FavoriteStore, type FavoriteTagScore, type FavoriteTagSnapshot, type FavoriteVideo, type SearchCandidate,
 } from '../core/favorite-home-fill';
+
+export interface FavoriteHomeFillState {
+  phase: 'idle' | 'updating' | 'searching' | 'ready' | 'filled' | 'empty' | 'error';
+  reason?: 'no-folders' | 'paused' | 'no-cutoff' | 'not-home' | 'disabled' | 'no-tags' | 'no-results';
+  sourceCount?: number;
+  tagCount?: number;
+  updatedAt?: number;
+  insertedCount?: number;
+  errorStage?: 'preferences' | 'search' | 'storage';
+  hasCachedPreferences?: boolean;
+}
 
 export interface FavoriteHomeFillControllerOptions {
   root?: Document;
@@ -13,11 +25,15 @@ export interface FavoriteHomeFillControllerOptions {
   onNotice?: (reason: 'favorite-fill-failed') => void;
   /** 仅在本轮真正请求补位搜索端点期间为 true，供面板显示搜索提示。 */
   onSearchStateChange?: (searching: boolean) => void;
+  onStateChange?: (state: FavoriteHomeFillState) => void;
+  rng?: () => number;
   now?: () => number;
 }
 
 export interface FavoriteHomeFillController {
   run(): Promise<void>;
+  continueFinding(): Promise<void>;
+  getState(): FavoriteHomeFillState;
   getTags(): Promise<FavoriteTagScore[]>;
   updateConfig(config: FilterConfig & FavoriteHomeFillConfig): void;
   disconnect(): void;
@@ -181,14 +197,17 @@ export function cloneHomeFillCard(template: Element, candidate: SearchCandidate,
 
 function defaultFetch(target: Document): typeof fetch | undefined { return target.defaultView?.fetch?.bind(target.defaultView); }
 
-async function jsonFetch(request: typeof fetch, url: string): Promise<unknown> {
-  const response = await request(url, { credentials: 'include' });
+async function jsonFetch(request: typeof fetch, url: string, signal?: AbortSignal): Promise<unknown> {
+  signal?.throwIfAborted();
+  const response = await request(url, { credentials: 'include', signal });
+  signal?.throwIfAborted();
   if (!response.ok) throw new Error(`request failed: ${response.status}`);
   const payload = await response.json() as unknown;
   if (payload && typeof payload === 'object') {
     const code = (payload as Record<string, unknown>).code;
     if (code !== undefined && code !== 0) throw new Error(`api request failed: ${String(code)}`);
   }
+  signal?.throwIfAborted();
   return payload;
 }
 
@@ -219,19 +238,21 @@ function readVideoTags(payload: unknown): string[] {
 }
 
 /** 收藏资源通常只返回 bvid；缺少标签时用有界并发读取视频详情标签。 */
-async function enrichFavoriteVideos(request: typeof fetch, videos: readonly FavoriteVideo[]): Promise<FavoriteVideo[]> {
+async function enrichFavoriteVideos(request: typeof fetch, videos: readonly FavoriteVideo[], signal?: AbortSignal): Promise<FavoriteVideo[]> {
   const output = videos.map((video) => ({ ...video, tags: [...video.tags] }));
   const pending = output.map((video, index) => ({ video, index })).filter(({ video }) => video.tags.length === 0);
   let cursor = 0;
   const worker = async (): Promise<void> => {
     while (cursor < pending.length) {
+      signal?.throwIfAborted();
       const item = pending[cursor++];
       if (!item) return;
       try {
-        const payload = await jsonFetch(request, `https://api.bilibili.com/x/web-interface/view/detail?bvid=${encodeURIComponent(item.video.bvid)}`);
+        const payload = await jsonFetch(request, `https://api.bilibili.com/x/web-interface/view/detail?bvid=${encodeURIComponent(item.video.bvid)}`, signal);
         const tags = readVideoTags(payload);
         if (tags.length) output[item.index] = { ...item.video, tags };
       } catch {
+        signal?.throwIfAborted();
         // 单个视频标签不可用时保留其它收藏；若全部不可用由调用方安全停止本轮补位。
       }
     }
@@ -241,7 +262,7 @@ async function enrichFavoriteVideos(request: typeof fetch, videos: readonly Favo
   return output;
 }
 
-async function readFavoriteFolder(request: typeof fetch, folder: string, limit: number): Promise<FavoriteVideo[]> {
+async function readFavoriteFolder(request: typeof fetch, folder: string, limit: number, signal?: AbortSignal): Promise<FavoriteVideo[]> {
   const target = Math.min(200, Math.max(1, Math.floor(limit)));
   const pageSize = Math.min(40, target);
   const pages = Math.ceil(target / pageSize);
@@ -258,14 +279,24 @@ async function readFavoriteFolder(request: typeof fetch, folder: string, limit: 
       platform: 'web',
       web_location: '333.1387',
     });
-    const payload = await jsonFetch(request, `https://api.bilibili.com/x/v3/fav/resource/list?${params.toString()}`);
-    const pageVideos = await enrichFavoriteVideos(request, normalizeFavoriteVideos(payload, folder, pageSize));
+    const payload = await jsonFetch(request, `https://api.bilibili.com/x/v3/fav/resource/list?${params.toString()}`, signal);
+    assertList(payload, ['medias', 'archives', 'list', 'items', 'records']);
+    const pageVideos = await enrichFavoriteVideos(request, normalizeFavoriteVideos(payload, folder, target - videos.length), signal);
+    signal?.throwIfAborted();
     videos.push(...pageVideos);
     const data = payload && typeof payload === 'object' && (payload as Record<string, unknown>).data;
     const hasMore = Boolean(data && typeof data === 'object' && (data as Record<string, unknown>).has_more);
     if (!hasMore || pageVideos.length === 0) break;
   }
   return videos.slice(0, target);
+}
+
+function assertList(payload: unknown, keys: string[]): void {
+  const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  const data = root.data && typeof root.data === 'object' ? root.data as Record<string, unknown> : root;
+  if (!Array.isArray(payload) && !Array.isArray(root.data) && !keys.some((key) => Array.isArray(data[key]))) {
+    throw new Error('unrecognized list response');
+  }
 }
 
 function readUid(payload: unknown): string | null {
@@ -327,6 +358,8 @@ async function loadFavoriteFolderPages(
     pageParams.set('pn', String(page));
     pageParams.set('ps', String(FAVORITE_FOLDER_PAGE_SIZE));
     const payload = await jsonFetch(request, `https://api.bilibili.com/x/v3/fav/folder/created/list?${pageParams.toString()}`);
+    assertList(payload, ['list', 'folders', 'items', 'created']);
+    if (!isEnabled()) throw new Error('favorite folder loading disabled');
     const items = rawFolderItems(payload);
     const before = folders.size;
     for (const folder of normalizeFavoriteFolders(payload)) {
@@ -364,6 +397,8 @@ export async function loadFavoriteFolders(
   const params = new URLSearchParams({ up_mid: resolvedUid, type: '0', web_location: '333.1387' });
   try {
     const payload = await jsonFetch(request, `https://api.bilibili.com/x/v3/fav/folder/created/list-all?${params.toString()}`);
+    assertList(payload, ['list', 'folders', 'items', 'created']);
+    if (!isEnabled()) throw new Error('favorite folder loading disabled');
     const folders = normalizeFavoriteFolders(payload);
     const count = readFolderCount(payload);
     // list-all 明确给出的数量少于 count 时不能当作完整列表，改走分页回退。
@@ -389,172 +424,283 @@ function selectionKey(config: FavoriteHomeFillConfig): string {
 export function createFavoriteHomeFillController(options: FavoriteHomeFillControllerOptions): FavoriteHomeFillController {
   const documentRef = options.root ?? (typeof document !== 'undefined' ? document : undefined);
   if (!documentRef) throw new Error('A document root is required');
-  let config = { ...options.config }; let disposed = false; let running: Promise<void> | null = null;
-  let lastRefreshRequest = config.favoriteRefreshRequestedAt ?? null;
+  let config = { ...options.config };
+  let disposed = false;
+  let running: Promise<void> | null = null;
+  let active: AbortController | null = null;
+  let loadingPreferences = false;
+  let revision = 0;
   let lastAttempt: string | null = null;
+  let lastRefreshRequest: number | null = null;
+  let selectionChanged = false;
   let scrollRound = 0;
+  let queuedScroll = false;
+  let knownUid: string | null = null;
+  let knownSnapshot: FavoriteTagSnapshot | null = null;
+  let state: FavoriteHomeFillState = { phase: 'idle' };
+  const request = options.fetch ?? defaultFetch(documentRef);
+  const store = options.store ?? createFavoriteHomeFillStore();
+  const now = options.now ?? (() => Date.now());
+  const rng = options.rng ?? Math.random;
+  const replacements = new Map<Element, FillReplacement>();
   const cardIds = new WeakMap<Element, number>();
   let nextCardId = 0;
-  const stateKey = (): string => `${selectionKey(config)}|enabled=${config.enabled}|cutoff=${config.cutoffMinute}|fill=${config.favoriteHomeFillEnabled}|refresh=${config.favoriteRefreshRequestedAt ?? ''}`;
-  const attemptKey = (): string => `${stateKey()}|scroll=${scrollRound}|${cards(documentRef).map((card) => {
+  const stateKey = (): string => `${selectionKey(config)}|${config.enabled}|${config.cutoffMinute}|${config.favoriteHomeFillEnabled}|${config.favoriteRefreshRequestedAt ?? ''}`;
+  const attemptKey = (): string => `${stateKey()}|${scrollRound}|${cards(documentRef).map((card) => {
     if (!cardIds.has(card)) cardIds.set(card, ++nextCardId);
-    return `${cardIds.get(card)}:${bvidOf(card)}:${card.getAttribute('data-pubdate')}:${(card as HTMLElement).hidden || card.getAttribute('data-time-filter-hidden') === '1'}`;
+    return `${cardIds.get(card)}:${bvidOf(card)}:${card.getAttribute('data-pubdate')}:${isHidden(card)}`;
   }).join('|')}`;
-  const replacements = new Map<Element, FillReplacement>();
-  const request = options.fetch ?? defaultFetch(documentRef); const store = options.store ?? createFavoriteHomeFillStore(); const now = options.now ?? (() => Date.now());
-  const notify = () => options.onNotice?.('favorite-fill-failed');
+  const publish = (next: FavoriteHomeFillState): void => {
+    const folders = selectedFolders(config);
+    const videoLimit = Math.min(FAVORITE_MAX_VIDEOS_PER_FOLDER, Math.max(1, Math.floor(config.favoriteVideoLimit ?? 50)));
+    const hasCachedPreferences = Boolean(knownSnapshot
+      && knownSnapshot.videoLimit === videoLimit
+      && knownSnapshot.folders.length === folders.length
+      && folders.every((folder) => knownSnapshot!.folders.includes(folder))
+      && knownSnapshot.tags.some(({ tag, score }) => tag.trim() && Number.isFinite(score) && score > 0));
+    state = { sourceCount: knownSnapshot?.folders.length, tagCount: knownSnapshot?.tags.length,
+      updatedAt: knownSnapshot?.updatedAt, hasCachedPreferences, ...next };
+    options.onStateChange?.({ ...state });
+  };
+  const idleReason = (): FavoriteHomeFillState['reason'] => {
+    if (config.favoriteHomeFillEnabled !== true) return 'disabled';
+    if (!selectedFolders(config).length) return 'no-folders';
+    if (!config.cutoffMinute) return 'no-cutoff';
+    if (!config.enabled) return 'paused';
+    if (!homePage(documentRef)) return 'not-home';
+    return undefined;
+  };
   let searchActive = false;
-  /** 搜索提示只随实际搜索端点请求切换，重复设置同一状态不通知。 */
   const setSearchActive = (value: boolean): void => {
     if (searchActive === value) return;
     searchActive = value;
     options.onSearchStateChange?.(value);
   };
-  const currentVideoLimit = (): number => {
-    const value = config.favoriteVideoLimit ?? 50;
-    const limit = typeof value === 'number' && Number.isFinite(value) ? value : 50;
-    return Math.min(FAVORITE_MAX_VIDEOS_PER_FOLDER, Math.max(1, Math.floor(limit)));
-  };
-  /** 选择或每夹视频上限变化后，旧快照不能继续沿用。 */
-  const snapshotMatches = (cached: FavoriteTagSnapshot | null, folders: string[], videoLimit: number): boolean => {
-    if (!cached || cached.videoLimit !== videoLimit) return false;
-    if (cached.folders.length !== folders.length) return false;
-    const cachedFolders = new Set(cached.folders);
-    return folders.every((folder) => cachedFolders.has(folder));
-  };
-  const loadSnapshot = async (): Promise<{ uid: string; snapshot: FavoriteTagSnapshot }> => {
-    const folders = selectedFolders(config);
-    const videoLimit = currentVideoLimit();
-    if (!folders.length || !request) throw new Error('favorite folders unavailable');
-    const uid = await resolveBilibiliUid(request); if (!uid) throw new Error('uid unavailable');
-    const refreshRequested = (config.favoriteRefreshRequestedAt ?? null) !== lastRefreshRequest;
-    const cached = await store.getSnapshot(uid);
-    let snapshot = refreshRequested || !snapshotMatches(cached, folders, videoLimit) ? null : cached;
-    if (refreshRequested) lastRefreshRequest = config.favoriteRefreshRequestedAt ?? null;
-    if (!snapshot) {
-      const videos: FavoriteVideo[] = [];
-      for (const folder of folders) videos.push(...await readFavoriteFolder(request, folder, videoLimit));
-      snapshot = { ...createFavoriteSnapshot(uid, folders, videos, now()), videoLimit };
-      if (cached?.nextSearchPages) snapshot.nextSearchPages = Object.fromEntries(snapshot.tags
-        .filter(({ tag }) => cached.nextSearchPages?.[tag] !== undefined)
-        .map(({ tag }) => [tag, cached.nextSearchPages![tag]]));
-      if (snapshot.tags.slice(0, 5).some(({ tag }) => tag === cached?.nextSourceTag)) snapshot.nextSourceTag = cached!.nextSourceTag;
-      await store.putSnapshot(snapshot);
+  const isHidden = (card: Element): boolean => (card as HTMLElement).hidden || card.getAttribute('data-time-filter-hidden') === '1';
+  const existingBvids = (): Set<string> => new Set(Array.from(documentRef.querySelectorAll('[data-bvid], .bili-video-card, .video-card'))
+    .map(bvidOf).filter((value): value is string => Boolean(value)));
+  const restore = (replacement: FillReplacement, showOriginal = false): void => {
+    const { clone, original, cell } = replacement;
+    if (clone.parentNode) clone.replaceWith(original);
+    (original as HTMLElement).hidden = !showOriginal;
+    if (showOriginal) original.removeAttribute('data-time-filter-hidden');
+    else original.setAttribute('data-time-filter-hidden', '1');
+    if (cell) {
+      cell.hidden = !showOriginal;
+      if (showOriginal) cell.removeAttribute('data-time-filter-hidden');
+      else cell.setAttribute('data-time-filter-hidden', '1');
     }
-    return { uid, snapshot };
+    replacements.delete(clone);
   };
-  const restoreFillCards = (showOriginal = false): void => {
-    for (const { clone, original, cell } of replacements.values()) {
-      if (clone.parentNode) {
-        if (cell && clone.parentNode === cell) cell.replaceChild(original, clone);
-        else clone.replaceWith(original);
-      }
-      (original as HTMLElement).hidden = !showOriginal;
-      if (showOriginal) original.removeAttribute('data-time-filter-hidden');
-      else original.setAttribute('data-time-filter-hidden', '1');
-      if (cell) {
-        cell.hidden = !showOriginal;
-        if (showOriginal) cell.removeAttribute('data-time-filter-hidden');
-        else cell.setAttribute('data-time-filter-hidden', '1');
-      }
-    }
-    replacements.clear();
+  const restoreAll = (showOriginal = false): void => {
+    for (const replacement of replacements.values()) restore(replacement, showOriginal);
   };
   const run = async (): Promise<void> => {
-    if (disposed || !homePage(documentRef) || !config.enabled || !config.cutoffMinute || config.favoriteHomeFillEnabled !== true) return;
-    const folders = selectedFolders(config); if (!folders.length || !request) return;
-    if (running) return running;
+    if (disposed) return;
+    if (running) {
+      const pending = running;
+      await pending;
+      if (running && running !== pending) await running;
+      return;
+    }
+    const reason = idleReason();
+    const explicitRefresh = config.favoriteRefreshRequestedAt != null && config.favoriteRefreshRequestedAt !== lastRefreshRequest;
+    if (reason === 'disabled' || reason === 'no-folders' || !request || (reason && !explicitRefresh && !selectionChanged)) {
+      publish({ phase: 'idle', reason });
+      return;
+    }
     const runAttempt = attemptKey();
-    if (runAttempt === lastAttempt) return;
+    if (lastAttempt === runAttempt) return;
     lastAttempt = runAttempt;
-    const runState = stateKey();
+    const controller = new AbortController();
+    active = controller;
+    loadingPreferences = true;
+    const runRevision = revision;
+    const runConfig = { ...config };
+    const check = (): void => {
+      controller.signal.throwIfAborted();
+      if (disposed || revision !== runRevision) throw new DOMException('Task cancelled', 'AbortError');
+    };
+    let errorStage: FavoriteHomeFillState['errorStage'] = 'preferences';
+    let claimUid: string | null = null;
+    const owner = crypto.randomUUID();
+    let claimed: string[] = [];
+    const inserted: FillReplacement[] = [];
     running = (async () => {
       try {
-        const loaded = await loadSnapshot();
-        const { uid, snapshot } = loaded;
-        if (disposed || stateKey() !== runState || !config.enabled || !config.cutoffMinute || config.favoriteHomeFillEnabled !== true) return;
-        let candidates = await store.getCandidates(uid); const history = await store.getHistory(uid);
-        const currentCards = cards(documentRef); const existing = new Set(currentCards.map(bvidOf).filter((value): value is string => Boolean(value)));
-        const hidden = currentCards.filter((card) => (card as HTMLElement).hidden || card.getAttribute('data-time-filter-hidden') === '1');
-        const hiddenBvids = hidden.map(bvidOf);
-        const need = hidden.length; if (!need) return;
-        const topTags = snapshot.tags.slice(0, 5);
-        const start = Math.max(0, topTags.findIndex(({ tag }) => tag === snapshot.nextSourceTag));
-        const searchTags = [...topTags.slice(start), ...topTags.slice(0, start)];
-        const preferredTags = searchTags.slice(0, Math.min(need, searchTags.length));
-        const historyIds = history.map((item) => item.bvid);
-        const choose = (): SearchCandidate[] => selectHomeFillCandidates(candidates, topTags, need, config.cutoffMinute, existing, historyIds, undefined, searchTags[0]?.tag);
-        const enough = (selected: SearchCandidate[]): boolean => selected.length >= need
-          && preferredTags.every(({ tag }) => selected.some((candidate) => candidate.sourceTag === tag));
-        if (!enough(choose())) {
-          let order = 0;
-          const pendingTags = [...searchTags];
-          const searchedTags = new Set<string>();
-          while (pendingTags.length && order < 5) {
-            const score = pendingTags.shift()!;
-            const available = choose();
-            if (enough(available)) break;
-            // 数量足够时只补缺席标签的候选，不因第一个标签已填满而跳过其它来源。
-            if (available.length >= need && (searchedTags.has(score.tag) || available.some((candidate) => candidate.sourceTag === score.tag))) continue;
-            if (disposed || stateKey() !== runState) return;
-            // 旧缓存已包含该标签时从第二页继续，避免反复拉取已推送完的第一页。
-            const page = snapshot.nextSearchPages?.[score.tag] ?? (candidates.some((candidate) => candidate.tags.includes(score.tag)) ? 2 : 1);
-            // 仅在实际发出搜索请求前通知一次；整轮搜索结束后统一关闭。
-            setSearchActive(true);
-            const payload = await jsonFetch(request, `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(score.tag)}&page=${page}`);
-            const fetched = normalizeSearchCandidates(payload, [score.tag], now());
-            candidates = [...candidates, ...fetched]; await store.putCandidates(uid, fetched);
-            const data = payload && typeof payload === 'object' ? (payload as Record<string, unknown>).data : undefined;
-            const totalPages = data && typeof data === 'object' ? Number((data as Record<string, unknown>).numPages) : NaN;
-            const nextPage = fetched.length === 0 || (Number.isFinite(totalPages) && totalPages > 0 && page >= totalPages) ? 1 : page + 1;
-            snapshot.nextSearchPages = { ...snapshot.nextSearchPages, [score.tag]: nextPage };
-            await store.putSnapshot(snapshot);
-            searchedTags.add(score.tag);
-            // 空位仍不足时继续轮询后续页；已到末页的标签留到下一轮再循环。
-            if (nextPage !== 1) pendingTags.push(score);
-            order += 1;
+        const folders = selectedFolders(runConfig);
+        const videoLimit = Math.min(FAVORITE_MAX_VIDEOS_PER_FOLDER, Math.max(1, Math.floor(runConfig.favoriteVideoLimit ?? 50)));
+        const uid = readUid(await jsonFetch(request, 'https://api.bilibili.com/x/web-interface/nav', controller.signal));
+        check();
+        if (!uid) throw new Error('uid unavailable');
+        knownUid = uid;
+        const cached = await store.getSnapshot(uid);
+        check();
+        knownSnapshot = cached;
+        const matches = cached?.videoLimit === videoLimit && cached.folders.length === folders.length && folders.every((folder) => cached.folders.includes(folder));
+        const refreshNeeded = explicitRefresh && (runConfig.favoriteRefreshRequestedAt! > (cached?.updatedAt ?? 0));
+        let snapshot: FavoriteTagSnapshot | null = matches && !refreshNeeded ? {
+          ...cached!, nextSearchPages: { ...cached!.nextSearchPages },
+          recentTagRounds: cached!.recentTagRounds?.map((round) => [...round]),
+        } : null;
+        if (!snapshot) {
+          publish({ phase: 'updating' });
+          const videos: FavoriteVideo[] = [];
+          for (const folder of folders) {
+            check();
+            videos.push(...await readFavoriteFolder(request, folder, videoLimit, controller.signal));
+            check();
           }
-          setSearchActive(false);
-        }
-        if (disposed || stateKey() !== runState || !config.enabled || !config.cutoffMinute || config.favoriteHomeFillEnabled !== true) return;
-        const selected = choose();
-        if (!selected.length) return;
-        const template = currentCards.find(isUsableTemplate);
-        if (!template) return;
-        const changedWhileLoading = attemptKey() !== runAttempt;
-        const pushed = [...history];
-        let lastSourceTag: string | undefined;
-        for (let index = 0; index < Math.min(hidden.length, selected.length); index += 1) {
-          const original = hidden[index];
-          if (!original.isConnected || bvidOf(original) !== hiddenBvids[index]
-            || (!(original as HTMLElement).hidden && original.getAttribute('data-time-filter-hidden') !== '1')) continue;
-          const replacement = cloneHomeFillCard(template, selected[index], documentRef); if (!replacement) continue;
-          const cell = hidden[index].closest('.col_3, .col_xs_1_5, .col_md_2, .col_xl_1_7') as HTMLElement | null;
-          original.replaceWith(replacement);
-          replacements.set(replacement, { clone: replacement, original, cell });
-          if (cell) { cell.hidden = false; cell.removeAttribute('data-time-filter-hidden'); }
-          pushed.push({ bvid: selected[index].bvid, pushedAt: now() });
-          lastSourceTag = selected[index].sourceTag;
-        }
-        // 自己插入的补位卡片不启动新一轮；请求期间新出现的原生卡片仍需要处理。
-        lastAttempt = changedWhileLoading ? null : attemptKey();
-        await store.putHistory(uid, pushed);
-        if (lastSourceTag) {
-          const lastIndex = topTags.findIndex(({ tag }) => tag === lastSourceTag);
-          snapshot.nextSourceTag = topTags[(lastIndex + 1) % topTags.length].tag;
+          snapshot = { ...createFavoriteSnapshot(uid, folders, videos, now()), videoLimit };
+          const tags = new Set(snapshot.tags.map(({ tag }) => tag));
+          snapshot.nextSearchPages = Object.fromEntries(Object.entries(cached?.nextSearchPages ?? {}).filter(([tag]) => tags.has(tag)));
+          snapshot.recentTagRounds = (cached?.recentTagRounds ?? []).map((round) => round.filter((tag) => tags.has(tag))).filter((round) => round.length).slice(-2);
+          check();
           await store.putSnapshot(snapshot);
+          check();
         }
+        knownSnapshot = snapshot;
+        lastRefreshRequest = runConfig.favoriteRefreshRequestedAt ?? null;
+        selectionChanged = false;
+        // 收藏读取不依赖截止时间；完成后才固定本轮补位使用的最新时间。
+        runConfig.cutoffMinute = config.cutoffMinute;
+        loadingPreferences = false;
+        publish({ phase: 'ready', reason: idleReason() });
+        if (idleReason()) return;
+        const currentCards = cards(documentRef);
+        const hidden = currentCards.filter(isHidden).map((card) => ({ card, bvid: bvidOf(card) }));
+        const need = hidden.length;
+        if (!need) return;
+        const roundTags = sampleFavoriteTags(snapshot.tags, snapshot.recentTagRounds, rng);
+        if (!roundTags.length) { publish({ phase: 'empty', reason: 'no-tags' }); return; }
+        let candidates = await store.getCandidates(uid);
+        check();
+        const history = await store.getHistory(uid);
+        check();
+        const historyIds = history.map(({ bvid }) => bvid);
+        const eligible = (): SearchCandidate[] => {
+          const blocked = new Set([...existingBvids(), ...historyIds]);
+          const merged = new Map<string, SearchCandidate>();
+          for (const candidate of candidates) {
+            if (blocked.has(candidate.bvid) || !classifyVideo(candidate, runConfig.cutoffMinute, { enabled: true }).visible
+              || !roundTags.some(({ tag }) => candidate.tags.includes(tag))) continue;
+            const previous = merged.get(candidate.bvid);
+            merged.set(candidate.bvid, previous ? { ...previous, tags: [...new Set([...previous.tags, ...candidate.tags])] } : candidate);
+          }
+          return [...merged.values()];
+        };
+        // 二分匹配为每个来源分配不同 BV，避免共享候选被重复计作来源覆盖。
+        const coverage = (pool: SearchCandidate[]): Set<string> => {
+          const assigned = new Map<string, string>();
+          const visit = (tag: string, seen: Set<string>): boolean => {
+            for (const candidate of pool) {
+              if (!candidate.tags.includes(tag) || seen.has(candidate.bvid)) continue;
+              seen.add(candidate.bvid);
+              const previous = assigned.get(candidate.bvid);
+              if (!previous || visit(previous, seen)) { assigned.set(candidate.bvid, tag); return true; }
+            }
+            return false;
+          };
+          for (const { tag } of roundTags.slice(0, need)) visit(tag, new Set());
+          return new Set(assigned.values());
+        };
+        const pending = [...roundTags];
+        const searched = new Set<string>();
+        const used = new Set<string>();
+        errorStage = 'search';
+        for (let count = 0; pending.length && count < 5;) {
+          const pool = eligible();
+          const covered = coverage(pool);
+          if (pool.length >= need && covered.size >= Math.min(need, roundTags.length)) break;
+          const score = pending.shift()!;
+          if (pool.length >= need && (searched.has(score.tag) || covered.has(score.tag))) continue;
+          check();
+          const page = snapshot.nextSearchPages?.[score.tag] ?? (candidates.some((candidate) => candidate.tags.includes(score.tag)) ? 2 : 1);
+          setSearchActive(true);
+          publish({ phase: 'searching' });
+          const payload = await jsonFetch(request, `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(score.tag)}&page=${page}`, controller.signal);
+          check();
+          assertList(payload, ['result', 'results', 'list', 'items']);
+          const fetched = normalizeSearchCandidates(payload, [score.tag], now());
+          await store.putCandidates(uid, fetched);
+          check();
+          candidates = [...candidates, ...fetched];
+          const data = folderListData(payload);
+          const totalPages = Number(data.numPages);
+          const nextPage = fetched.length === 0 || (Number.isFinite(totalPages) && totalPages > 0 && page >= totalPages) ? 1 : page + 1;
+          snapshot.nextSearchPages = { ...snapshot.nextSearchPages, [score.tag]: nextPage };
+          searched.add(score.tag);
+          used.add(score.tag);
+          count += 1;
+          if (nextPage !== 1) pending.push(score);
+        }
+        setSearchActive(false);
+        check();
+        const selected = selectHomeFillCandidates(eligible(), roundTags, need, runConfig.cutoffMinute, [], [], undefined, rng);
+        const template = cards(documentRef).find(isUsableTemplate);
+        errorStage = 'storage';
+        claimUid = uid;
+        if (template && selected.length) {
+          claimed = await store.claimHistory(uid, selected.map(({ bvid }) => ({ bvid, pushedAt: now() })), owner);
+          check();
+          let targetIndex = 0;
+          for (const candidate of selected) {
+            if (!claimed.includes(candidate.bvid) || existingBvids().has(candidate.bvid)) continue;
+            let target = hidden[targetIndex++];
+            while (target && (!target.card.isConnected || bvidOf(target.card) !== target.bvid || !isHidden(target.card))) target = hidden[targetIndex++];
+            if (!target) break;
+            check();
+            const clone = cloneHomeFillCard(template, candidate, documentRef);
+            if (!clone) continue;
+            const cell = target.card.closest('.col_3, .col_xs_1_5, .col_md_2, .col_xl_1_7') as HTMLElement | null;
+            const replacement = { clone, original: target.card, cell };
+            target.card.replaceWith(clone);
+            replacements.set(clone, replacement);
+            inserted.push(replacement);
+            if (cell) { cell.hidden = false; cell.removeAttribute('data-time-filter-hidden'); }
+            if (candidate.sourceTag) used.add(candidate.sourceTag);
+          }
+          const displayed = new Set(inserted.map(({ clone }) => bvidOf(clone)));
+          await store.releaseHistory(uid, claimed.filter((bvid) => !displayed.has(bvid)), owner);
+          check();
+          claimed = claimed.filter((bvid) => displayed.has(bvid));
+        }
+        if (used.size) snapshot.recentTagRounds = [...(snapshot.recentTagRounds ?? []), [...used]].slice(-2);
+        await store.putSnapshot(snapshot);
+        check();
+        knownSnapshot = snapshot;
+        publish(inserted.length ? { phase: 'filled', insertedCount: inserted.length } : { phase: 'empty', reason: 'no-results', insertedCount: 0 });
+        // 自己的插卡不会启动下一轮；外部新增卡片由下一次 DOM 批次处理。
+        const initialCards = new Set(currentCards);
+        lastAttempt = cards(documentRef).some((card) => !initialCards.has(card) && isHidden(card)) ? null : attemptKey();
       } catch {
-        // 搜索失败时先结束搜索提示，再交给现有失败提示。
+        for (const replacement of inserted) restore(replacement, !config.enabled || !config.cutoffMinute);
+        if (claimUid && claimed.length) {
+          try { await store.releaseHistory(claimUid, claimed, owner); }
+          catch { errorStage = 'storage'; }
+        }
         setSearchActive(false);
-        notify();
-      }
-      finally {
+        if (!controller.signal.aborted && !disposed && runRevision === revision) {
+          publish({ phase: 'error', errorStage });
+          options.onNotice?.('favorite-fill-failed');
+        }
+      } finally {
         setSearchActive(false);
+        loadingPreferences = false;
         running = null;
-        if (!disposed && attemptKey() !== lastAttempt) void run();
+        if (active === controller) active = null;
+        if (!disposed && (runRevision !== revision || queuedScroll || lastAttempt === null)) {
+          if (queuedScroll) { scrollRound += 1; queuedScroll = false; }
+          void run();
+        }
       }
-    })(); return running;
+    })();
+    return running;
+  };
+  const continueFinding = async (): Promise<void> => {
+    if (running) return running;
+    scrollRound += 1;
+    return run();
   };
   const view = documentRef.defaultView;
   let lastScrollY = view?.scrollY ?? 0;
@@ -569,62 +715,77 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
     const position = view?.scrollY ?? 0;
     const downward = position > lastScrollY;
     lastScrollY = position;
-    if (!downward || disposed || !config.enabled || !config.cutoffMinute || config.favoriteHomeFillEnabled !== true || !homePage(documentRef)) {
-      clearScrollRetry();
-      return;
-    }
+    if (!downward || disposed || idleReason()) { clearScrollRetry(); return; }
     if (scrollTimer === null) scrollAttempt = attemptKey();
     else clearTimeout(scrollTimer);
     scrollTimer = setTimeout(() => {
       const sameBatch = scrollAttempt === attemptKey();
       clearScrollRetry();
-      // 新卡片或本轮补位已推进时交给原有链路，避免一次下滑重复触发两轮。
-      if (!sameBatch || !cards(documentRef).some((card) => (card as HTMLElement).hidden || card.getAttribute('data-time-filter-hidden') === '1')) return;
-      scrollRound += 1;
-      void run();
+      if (!sameBatch || !cards(documentRef).some(isHidden)) return;
+      if (running) queuedScroll = true;
+      else void continueFinding();
     }, 200);
   };
   view?.addEventListener('scroll', onScroll, { passive: true });
   const observer = typeof MutationObserver !== 'undefined' ? new MutationObserver(() => {
-    if (attemptKey() !== lastAttempt) void run();
+    if (!running && attemptKey() !== lastAttempt) void run();
   }) : null;
-  observer?.observe(documentRef, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['hidden', 'data-time-filter-hidden', 'data-time-filter-unknown', 'data-bvid', 'data-pubdate', 'href'],
-  });
+  observer?.observe(documentRef, { childList: true, subtree: true, attributes: true,
+    attributeFilter: ['hidden', 'data-time-filter-hidden', 'data-time-filter-unknown', 'data-bvid', 'data-pubdate', 'href'] });
   void run();
-  const getTags = async (): Promise<FavoriteTagScore[]> => {
-    if (disposed || config.favoriteHomeFillEnabled !== true || !selectedFolders(config).length || !request) return [];
-    if (running) await running;
-    return (await loadSnapshot()).snapshot.tags;
-  };
   return {
     run,
-    getTags,
+    continueFinding,
+    getState: () => ({ ...state }),
+    async getTags() {
+      if (disposed || !request) return [];
+      const version = revision;
+      if (running) await running;
+      if (disposed || version !== revision) return [];
+      const uid = knownUid ?? await resolveBilibiliUid(request);
+      if (!uid || disposed || version !== revision) return [];
+      const snapshot = await store.getSnapshot(uid);
+      if (disposed || version !== revision) return [];
+      return snapshot?.tags ?? [];
+    },
     updateConfig(next) {
-      const stateChanged = config.cutoffMinute !== next.cutoffMinute
-        || config.enabled !== next.enabled
-        || selectionKey(config) !== selectionKey(next)
-        || config.favoriteHomeFillEnabled !== next.favoriteHomeFillEnabled
-        || config.favoriteRefreshRequestedAt !== next.favoriteRefreshRequestedAt;
-      if (stateChanged) lastAttempt = null;
-      if (stateChanged) restoreFillCards(!next.enabled || !next.cutoffMinute);
+      const previous = config;
+      const changedSelection = selectionKey(previous) !== selectionKey(next);
+      const changed = stateKey() !== `${selectionKey(next)}|${next.enabled}|${next.cutoffMinute}|${next.favoriteHomeFillEnabled}|${next.favoriteRefreshRequestedAt ?? ''}`;
       config = { ...next };
-      if (config.favoriteHomeFillEnabled !== true || !config.enabled) {
+      if (changed) {
+        const keepPreferenceRead = loadingPreferences && !changedSelection
+          && previous.enabled === next.enabled
+          && previous.favoriteHomeFillEnabled === next.favoriteHomeFillEnabled
+          && previous.favoriteRefreshRequestedAt === next.favoriteRefreshRequestedAt;
+        if (!keepPreferenceRead) {
+          revision += 1;
+          active?.abort();
+        }
+        lastAttempt = keepPreferenceRead ? attemptKey() : null;
+        selectionChanged ||= changedSelection;
         clearScrollRetry();
+        queuedScroll = false;
         setSearchActive(false);
-        restoreFillCards(!config.enabled || !config.cutoffMinute);
-      } else void run();
+        const advancing = previous.cutoffMinute && next.cutoffMinute && next.cutoffMinute >= previous.cutoffMinute;
+        if (!advancing || changedSelection || previous.enabled !== next.enabled || previous.favoriteHomeFillEnabled !== next.favoriteHomeFillEnabled) {
+          restoreAll(!next.enabled || !next.cutoffMinute);
+        }
+      }
+      if (idleReason() && !(loadingPreferences && active && !active.signal.aborted)) {
+        publish({ phase: 'idle', reason: idleReason() });
+      }
+      void run();
     },
     disconnect() {
       disposed = true;
+      revision += 1;
+      active?.abort();
       clearScrollRetry();
       view?.removeEventListener('scroll', onScroll);
       setSearchActive(false);
       observer?.disconnect();
-      restoreFillCards();
+      restoreAll();
     },
   };
 }

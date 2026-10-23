@@ -1,0 +1,71 @@
+name: Release packages
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout released tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check, test and build
+        run: npm run build
+
+      - name: Check release versions
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const json = (path) => JSON.parse(readFileSync(path, 'utf8'));
+          const tag = process.env.RELEASE_TAG;
+          if (!/^v\d+\.\d+\.\d+$/.test(tag)) throw new Error('Release tag must use vX.Y.Z');
+          const version = tag.slice(1);
+          const lock = json('package-lock.json');
+          const versions = {
+            package: json('package.json').version,
+            lock: lock.version,
+            lockRoot: lock.packages[''].version,
+            extension: json('dist/extension/manifest.json').version,
+            userscript: readFileSync('dist/userscript/bilibili-time-machine.user.js', 'utf8').match(/^\/\/\s*@version\s+(\S+)/m)?.[1],
+          };
+          for (const [name, actual] of Object.entries(versions)) {
+            if (actual !== version) throw new Error(`${name}: ${actual} does not match ${tag}`);
+          }
+          NODE
+
+      - name: Package production outputs
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mkdir -p release-assets
+          (cd dist/extension && zip -r "../../release-assets/bilibili-time-machine-extension-${RELEASE_TAG}.zip" .)
+          (cd dist/userscript && zip "../../release-assets/bilibili-time-machine-userscript-${RELEASE_TAG}.zip" bilibili-time-machine.user.js)
+          cp dist/userscript/bilibili-time-machine.user.js release-assets/bilibili-time-machine.user.js
+
+      - name: Upload assets to the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" release-assets/* --clobber

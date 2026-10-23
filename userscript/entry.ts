@@ -106,12 +106,14 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     onNotice: (reason) => { if (configReady) notices.show('过滤器无法验证当前内容，相关内容已隐藏。', reason); },
   });
   const pageFetch = target.fetch ? target.fetch.bind(target) : undefined;
+  let panel: FilterPanelController | undefined;
   const favoriteFill: FavoriteHomeFillController = createFavoriteHomeFillController({
     root: documentRef, config: current, fetch: pageFetch,
     onNotice: () => { if (configReady) notices.show('收藏标签补位失败，本轮已停止。', 'favorite-fill-failed'); },
     onSearchStateChange: (searching) => notices.setSearching(searching),
+    onStateChange: (state) => panel?.updateFavoriteState(state),
   });
-  const loadFolders = pageFetch ? createFavoriteFolderLoader(pageFetch, () => mounted && configReady && current.favoriteHomeFillEnabled === true) : undefined;
+  const loadFolders = pageFetch ? createFavoriteFolderLoader(pageFetch, () => mounted && configReady) : undefined;
   let autoAdvanceTimer: number | undefined;
   const refreshAutoAdvance = (): void => {
     if (!configReady || !current.autoAdvance) return;
@@ -119,6 +121,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     if (next.cutoffMinute === current.cutoffMinute) return;
     current = next;
     controller.updateCutoff(next.cutoffMinute);
+    favoriteFill.updateConfig(next);
     nativeSearchFilter?.apply(next);
     repagination?.apply(next);
     panel?.update(next);
@@ -142,12 +145,12 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
       ? (url, payload, config) => repagination.transformVideo(url, payload, config)
       : undefined,
   });
-  let panel: FilterPanelController;
   panel = createFilterPanel({
     document: documentRef,
     config: current,
     onFavoriteFoldersRefresh: loadFolders,
     onFavoriteTagsLoad: () => favoriteFill.getTags(),
+    onFavoriteContinue: () => favoriteFill.continueFinding(),
     onChange: async (config) => {
       if (!configReady) return;
       current = resolveAutoAdvanceConfig(normaliseConfig(config));
@@ -160,6 +163,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
       sendBridgeMessage(current);
     },
   });
+  panel.updateFavoriteState(favoriteFill.getState());
   autoAdvanceTimer = target.setInterval(refreshAutoAdvance, 1_000);
   const onMessage = (event: MessageEvent): void => {
     const data = event.data as { source?: unknown; type?: unknown; message?: unknown; reason?: unknown } | null;
@@ -173,7 +177,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     favoriteFill?.updateConfig(current);
     nativeSearchFilter?.apply(current);
     repagination?.apply(current);
-    panel.update(current);
+    panel?.update(current);
     sendBridgeMessage(current);
   }).catch(() => {
     // 配置读取失败时保持严格隐藏，并向用户提示原因。
@@ -181,7 +185,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
       devLog.log({ reason: 'config-read-failed', message: '配置读取失败', details: { source: 'userscript' } });
     }
     notices.show('配置读取失败，内容已暂时隐藏。', 'config-read-failed');
-    panel.update(pendingConfig);
+    panel?.update(pendingConfig);
   });
   return {
     destroy: () => {
@@ -193,7 +197,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
       repagination?.destroy();
       controller.disconnect();
       favoriteFill?.disconnect();
-      panel.destroy();
+      panel?.destroy();
       notices.destroy();
       target.removeEventListener('message', onMessage);
     },

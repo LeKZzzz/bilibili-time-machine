@@ -42,6 +42,12 @@ button:focus-visible, summary:focus-visible { outline: 2px solid #007eae; outlin
 .heading-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .close.ui-btn { font-size: 20px; font-weight: 400; }
 .state.ui-badge { background: #eaf8fe; color: #007eae; border: 0; font-size: 12px; white-space: nowrap; }
+.filter-control.ui-btn { min-height: 38px; border: 1px solid #007eae; background: #eaf8fe; color: #007eae; font-weight: 600; white-space: nowrap; }
+.filter-control.ui-btn[data-paused="true"] { background: #007eae; color: #fff; }
+.time-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 16px; }
+#time-draft-status { flex: 1 0 100%; color: var(--muted); font-size: 12px; }
+#time-draft-status.validation { color: #b53225; }
+.work-status { margin: 12px 0 6px; font-size: 13px; color: #344e5b; overflow-wrap: anywhere; }
 .section { padding: 18px 20px; border-top: 1px solid var(--line); }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .section-label { font-weight: 600; }
@@ -94,6 +100,7 @@ button:focus-visible, summary:focus-visible { outline: 2px solid #007eae; outlin
   .card { max-height: calc(100dvh - 124px); }
   .title, .tag-dialog-title, .section, .panel-footer { padding-left: 16px; padding-right: 16px; }
   .heading-actions { gap: 2px; }
+  .section > .row:first-child { flex-wrap: wrap; }
   .cutoff-grid { grid-template-columns: minmax(0, 1fr); }
   .dialog-body { padding-left: 16px; padding-right: 16px; }
 }

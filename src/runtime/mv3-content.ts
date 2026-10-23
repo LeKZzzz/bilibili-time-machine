@@ -71,12 +71,14 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     onNotice: (reason) => { if (configReady) notices.show('过滤器无法验证当前内容，相关内容已隐藏。', reason); },
   });
   const pageFetch = window.fetch ? window.fetch.bind(window) : undefined;
+  let panel: FilterPanelController | undefined;
   const favoriteFill: FavoriteHomeFillController = createFavoriteHomeFillController({
     root: documentRef, config: current, fetch: pageFetch,
     onNotice: () => { if (configReady) notices.show('收藏标签补位失败，本轮已停止。', 'favorite-fill-failed'); },
     onSearchStateChange: (searching) => notices.setSearching(searching),
+    onStateChange: (state) => panel?.updateFavoriteState(state),
   });
-  const loadFolders = pageFetch ? createFavoriteFolderLoader(pageFetch, () => mounted && configReady && current.favoriteHomeFillEnabled === true) : undefined;
+  const loadFolders = pageFetch ? createFavoriteFolderLoader(pageFetch, () => mounted && configReady) : undefined;
   let autoAdvanceTimer: number | undefined;
   const refreshAutoAdvance = (): void => {
     if (!configReady || !current.autoAdvance) return;
@@ -84,6 +86,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     if (next.cutoffMinute === current.cutoffMinute) return;
     current = next;
     controller.updateCutoff(next.cutoffMinute);
+    favoriteFill.updateConfig(next);
     nativeSearchFilter?.apply(next);
     panel?.update(next);
     send(next);
@@ -92,12 +95,12 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   const scanInitial = (): void => { controller.scan(); };
   if (deferScan) initialScanTimer = window.setTimeout(scanInitial, 500);
   else scanInitial();
-  let panel: FilterPanelController;
   panel = createFilterPanel({
     document: documentRef,
     config: current,
     onFavoriteFoldersRefresh: loadFolders,
     onFavoriteTagsLoad: () => favoriteFill.getTags(),
+    onFavoriteContinue: () => favoriteFill.continueFinding(),
     onChange: async (config) => {
       if (!configReady) return;
       current = resolveAutoAdvanceConfig(normaliseConfig(config));
@@ -109,6 +112,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
       send(current);
     },
   });
+  panel.updateFavoriteState(favoriteFill.getState());
   autoAdvanceTimer = window.setInterval(refreshAutoAdvance, 1_000);
 
   const onMessage = (event: MessageEvent): void => {
@@ -125,14 +129,14 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     controller.updateConfig(current);
     favoriteFill?.updateConfig(current);
     nativeSearchFilter?.apply(current);
-    panel.update(current);
+    panel?.update(current);
     send(current);
   }).catch(() => {
     if (__TIME_FILTER_DEV__) {
       devLog.log({ reason: 'config-read-failed', message: '配置读取失败', details: { source: 'mv3-content' } });
     }
     notices.show('配置读取失败，内容已暂时隐藏。', 'config-read-failed');
-    panel.update(pendingConfig);
+    panel?.update(pendingConfig);
   });
   return {
     destroy: () => {
@@ -142,7 +146,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
       if (initialScanTimer !== undefined) window.clearTimeout(initialScanTimer);
       if (autoAdvanceTimer !== undefined) window.clearInterval(autoAdvanceTimer);
       nativeSearchFilter?.destroy();
-      panel.destroy();
+      panel?.destroy();
       notices.destroy();
       window.removeEventListener('message', onMessage);
     },

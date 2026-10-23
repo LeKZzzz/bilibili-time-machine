@@ -127,6 +127,20 @@ describe('favorite folder loader', () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it('allows first-source selection but stops after that selection is cancelled', async () => {
+    let selecting = true;
+    const request = vi.fn(async () => {
+      selecting = false;
+      return response({ mid: 7 });
+    });
+    const loader = createFavoriteFolderLoader(request as typeof fetch, () => true, memoryStorage());
+    await expect(loader(false, () => selecting)).rejects.toThrow('favorite folder loading disabled');
+    expect(request).toHaveBeenCalledOnce();
+    expect(folderRequests(request)).toBe(0);
+    await expect(loader(false, () => selecting)).rejects.toThrow('favorite folder loading disabled');
+    expect(request).toHaveBeenCalledOnce();
+  });
+
   it('stops pagination when disabled mid-refresh and keeps the previous cache', async () => {
     let enabled = true;
     let mode: 'initial' | 'refresh' = 'initial';

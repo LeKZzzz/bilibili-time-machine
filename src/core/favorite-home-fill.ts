@@ -50,8 +50,8 @@ export interface FavoriteTagSnapshot {
   videoLimit?: number;
   /** 每个标签下一轮搜索的页码，复用快照存储以便跨刷新继续。 */
   nextSearchPages?: Record<string, number>;
-  /** 下一批优先参与补位的标签，避免少量空位始终由同一标签占用。 */
-  nextSourceTag?: string;
+  /** 最近两轮实际搜索或落卡的标签，仅用于抽样降权。 */
+  recentTagRounds?: string[][];
 }
 
 export interface SearchCandidate extends VideoRecord {
@@ -74,6 +74,8 @@ export interface SearchCandidate extends VideoRecord {
 export type FavoriteHomeFillCandidate = SearchCandidate;
 
 export interface PushedHistory { bvid: string; pushedAt: number; }
+interface OwnedHistory extends PushedHistory { owner?: string; }
+export interface FavoriteRoundTag extends FavoriteTagScore { weight: number; }
 
 export interface FavoriteStore {
   getSnapshot(uid: string): Promise<FavoriteTagSnapshot | null>;
@@ -82,6 +84,8 @@ export interface FavoriteStore {
   putCandidates(uid: string, candidates: SearchCandidate[]): Promise<void>;
   getHistory(uid: string): Promise<PushedHistory[]>;
   putHistory(uid: string, history: PushedHistory[]): Promise<void>;
+  claimHistory(uid: string, history: PushedHistory[], owner: string): Promise<string[]>;
+  releaseHistory(uid: string, bvids: readonly string[], owner: string): Promise<void>;
   clear(uid?: string): Promise<void>;
 }
 
@@ -265,42 +269,94 @@ export function normalizeSearchCandidates(payload: unknown, tags: readonly strin
   return out.slice(0, FAVORITE_MAX_CANDIDATES);
 }
 
-/** 先轮询不同标签，再按分数分配剩余名额；标签内保持搜索顺序。 */
-export function selectHomeFillCandidates(candidates: readonly SearchCandidate[], scores: readonly FavoriteTagScore[], count: number, cutoff: string | number | null, existing: Iterable<string> = [], history: Iterable<string> = [], nowSeconds?: number, firstSourceTag?: string): SearchCandidate[] {
-  const blocked = new Set([...existing, ...history]); const used = new Set<string>();
-  const groups = new Map<string, SearchCandidate[]>();
+function weightedIndex(items: readonly { weight: number }[], rng: () => number): number {
+  const total = items.reduce((sum, item) => sum + item.weight, 0);
+  let remaining = rng() * total;
+  for (let index = 0; index < items.length; index += 1) {
+    remaining -= items[index].weight;
+    if (remaining < 0) return index;
+  }
+  return items.length - 1;
+}
+
+/** 全部有效兴趣参与抽样；近期使用只降权，不排除。 */
+export function sampleFavoriteTags(scores: readonly FavoriteTagScore[], recentTagRounds: readonly (readonly string[])[] = [], rng: () => number = Math.random): FavoriteRoundTag[] {
+  const recent = new Set(recentTagRounds.slice(-2).flat());
+  const seen = new Set<string>();
+  const pool = scores.filter((item) => {
+    if (!item.tag.trim() || !Number.isFinite(item.score) || item.score <= 0 || seen.has(item.tag)) return false;
+    seen.add(item.tag);
+    return true;
+  }).slice(0, FAVORITE_MAX_TAGS).map((item) => ({ ...item, weight: Math.sqrt(item.score) * (recent.has(item.tag) ? 0.35 : 1) }));
+  const result: FavoriteRoundTag[] = [];
+  while (pool.length && result.length < 5) result.push(...pool.splice(weightedIndex(pool, rng), 1));
+  return result;
+}
+
+/** 同 BV 使用较新元数据，并保留所有命中来源。 */
+export function mergeSearchCandidates(candidates: readonly SearchCandidate[]): SearchCandidate[] {
+  const map = new Map<string, SearchCandidate>();
   for (const candidate of candidates) {
-    if (!candidate.bvid || blocked.has(candidate.bvid) || used.has(candidate.bvid)) continue;
-    if (!classifyVideo(candidate, cutoff, { enabled: true, nowSeconds }).visible) continue;
-    for (const tag of candidate.tags) { const list = groups.get(tag) ?? []; list.push(candidate); groups.set(tag, list); }
+    if (!candidate.bvid) continue;
+    const old = map.get(candidate.bvid);
+    map.set(candidate.bvid, {
+      ...(old && old.collectedAt > candidate.collectedAt ? old : candidate),
+      tags: [...new Set([...(old?.tags ?? []), ...candidate.tags])],
+    });
   }
-  const ordered = scores.filter((score) => groups.has(score.tag)).slice(0, 5);
+  return [...map.values()];
+}
+
+/** 本轮标签顺序先各取一条，再按本轮权重随机分配，组内随机选视频。 */
+export function selectHomeFillCandidates(candidates: readonly SearchCandidate[], scores: readonly (FavoriteTagScore & { weight?: number })[], count: number, cutoff: string | number | null, existing: Iterable<string> = [], history: Iterable<string> = [], nowSeconds?: number, rng: () => number = Math.random): SearchCandidate[] {
+  const blocked = new Set([...existing, ...history]);
+  const used = new Set<string>();
+  const eligible = mergeSearchCandidates(candidates).filter((candidate) => !blocked.has(candidate.bvid)
+    && classifyVideo(candidate, cutoff, { enabled: true, nowSeconds }).visible);
+  const ordered = scores.filter((score) => Number.isFinite(score.score) && score.score > 0)
+    .map((score) => ({ ...score, weight: score.weight ?? Math.sqrt(score.score), candidates: eligible.filter((item) => item.tags.includes(score.tag)) }));
   const result: SearchCandidate[] = [];
-  const start = Math.max(0, ordered.findIndex((score) => score.tag === firstSourceTag));
-  for (const score of [...ordered.slice(start), ...ordered.slice(0, start)]) {
-    if (result.length >= Math.max(0, count)) break;
-    const next = groups.get(score.tag)?.find((candidate) => !used.has(candidate.bvid));
-    if (!next) continue;
-    used.add(next.bvid);
-    result.push({ ...next, sourceTag: score.tag });
-  }
-  const highest = Math.max(0.0001, ...ordered.map((score) => score.score));
-  while (result.length < Math.max(0, count) && ordered.length) {
-    let advanced = false;
-    for (const score of ordered) {
-      const list = groups.get(score.tag) ?? [];
-      const quota = Math.max(1, Math.round((score.score / highest) * 3));
-      for (let turn = 0; turn < quota && result.length < count; turn += 1) {
-        const next = list.find((candidate) => !used.has(candidate.bvid));
-        if (!next) break;
-        used.add(next.bvid);
-        // 记录本轮真正命中的标签，供首页补位标记展示来源。
-        result.push({ ...next, sourceTag: score.tag });
-        advanced = true;
-      }
-      if (result.length >= count) break;
+  const limit = Math.max(0, Math.floor(count));
+  const firstChoices = ordered.map((group) => {
+    const pool = [...group.candidates];
+    for (let index = pool.length - 1; index > 0; index -= 1) {
+      const other = Math.floor(rng() * (index + 1));
+      [pool[index], pool[other]] = [pool[other], pool[index]];
     }
-    if (!advanced) break;
+    return pool;
+  });
+  const assignments = new Map<number, SearchCandidate>();
+  const owners = new Map<string, number>();
+  // 多标签命中同一 BV 时可让前一来源改选，避免有足够候选却丢失来源覆盖。
+  const assign = (index: number, visited: Set<string>): boolean => {
+    for (const candidate of firstChoices[index]) {
+      if (visited.has(candidate.bvid)) continue;
+      visited.add(candidate.bvid);
+      const owner = owners.get(candidate.bvid);
+      if (owner !== undefined && !assign(owner, visited)) continue;
+      owners.set(candidate.bvid, index);
+      assignments.set(index, candidate);
+      return true;
+    }
+    return false;
+  };
+  for (let index = 0; index < ordered.length && assignments.size < limit; index += 1) assign(index, new Set());
+  for (const [index, candidate] of assignments) {
+    used.add(candidate.bvid);
+    result.push({ ...candidate, sourceTag: ordered[index].tag });
+  }
+  const available = (group: typeof ordered[number]) => group.candidates.filter((item) => !used.has(item.bvid));
+  const take = (group: typeof ordered[number]): void => {
+    const pool = available(group);
+    if (!pool.length) return;
+    const next = pool[Math.floor(rng() * pool.length)];
+    used.add(next.bvid);
+    result.push({ ...next, sourceTag: group.tag });
+  };
+  while (result.length < limit) {
+    const groups = ordered.filter((group) => available(group).length > 0);
+    if (!groups.length) break;
+    take(groups[weightedIndex(groups, rng)]);
   }
   return result;
 }
@@ -309,10 +365,34 @@ export function pruneTtl<T extends { collectedAt?: number; pushedAt?: number; up
   return items.filter((item) => isFresh(item, ttl, now)).sort((a, b) => (Number(b.collectedAt ?? b.pushedAt ?? b.updatedAt) - Number(a.collectedAt ?? a.pushedAt ?? a.updatedAt))).slice(0, max);
 }
 
-interface MemoryBucket { snapshots: Map<string, FavoriteTagSnapshot>; candidates: Map<string, SearchCandidate[]>; history: Map<string, PushedHistory[]>; }
+interface MemoryBucket { snapshots: Map<string, FavoriteTagSnapshot>; candidates: Map<string, SearchCandidate[]>; history: Map<string, OwnedHistory[]>; }
 const memoryBucket: MemoryBucket = { snapshots: new Map(), candidates: new Map(), history: new Map() };
-// UID 和 BV 号只包含 ASCII 字符，使用 ~ 作为字符串键的稳定上界，避免产物包含 U+FFFF 非字符。
+// UID 和 BV 号只包含 ASCII 字符，使用 ~ 作为字符串键的稳定上界。
 const INDEXED_DB_STRING_MAX = '~';
+
+function mergeHistory(existing: readonly OwnedHistory[], incoming: readonly PushedHistory[]): OwnedHistory[] {
+  const map = new Map(existing.map((item) => [item.bvid, item]));
+  for (const item of incoming) {
+    const old = map.get(item.bvid);
+    if (!old || item.pushedAt > old.pushedAt) map.set(item.bvid, { ...item });
+  }
+  return pruneTtl([...map.values()], FAVORITE_HISTORY_TTL, FAVORITE_MAX_HISTORY);
+}
+
+function claimRows(existing: readonly OwnedHistory[], incoming: readonly PushedHistory[], owner: string): { rows: OwnedHistory[]; claimed: string[] } {
+  const rows = pruneTtl(existing, FAVORITE_HISTORY_TTL, FAVORITE_MAX_HISTORY);
+  const used = new Set(rows.map((item) => item.bvid));
+  const claimed: string[] = [];
+  for (const item of pruneTtl(incoming, FAVORITE_HISTORY_TTL, FAVORITE_MAX_HISTORY)) {
+    if (used.has(item.bvid)) continue;
+    used.add(item.bvid);
+    rows.push({ ...item, owner });
+    claimed.push(item.bvid);
+  }
+  const keep = pruneTtl(rows, FAVORITE_HISTORY_TTL, FAVORITE_MAX_HISTORY);
+  const keptClaims = new Set(keep.filter((item) => item.owner === owner).map((item) => item.bvid));
+  return { rows: keep, claimed: claimed.filter((bvid) => keptClaims.has(bvid)) };
+}
 
 /** IndexedDB 存储；不可用时使用当前页面内存，且始终按 UID 分区。 */
 export function createFavoriteHomeFillStore(options: { indexedDB?: IDBFactory; dbName?: string } = {}): FavoriteStore {
@@ -322,26 +402,92 @@ export function createFavoriteHomeFillStore(options: { indexedDB?: IDBFactory; d
   let dbPromise: Promise<IDBDatabase> | undefined;
   const open = (): Promise<IDBDatabase> => dbPromise ?? (dbPromise = new Promise((resolve, reject) => {
     const request = indexed.open(dbName, 1);
-    request.onupgradeneeded = () => { const db = request.result; if (!db.objectStoreNames.contains('snapshots')) db.createObjectStore('snapshots', { keyPath: 'uid' }); if (!db.objectStoreNames.contains('candidates')) db.createObjectStore('candidates', { keyPath: ['uid', 'bvid'] }); if (!db.objectStoreNames.contains('history')) db.createObjectStore('history', { keyPath: ['uid', 'bvid'] }); };
-    request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error ?? new Error('IndexedDB unavailable'));
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('snapshots')) db.createObjectStore('snapshots', { keyPath: 'uid' });
+      if (!db.objectStoreNames.contains('candidates')) db.createObjectStore('candidates', { keyPath: ['uid', 'bvid'] });
+      if (!db.objectStoreNames.contains('history')) db.createObjectStore('history', { keyPath: ['uid', 'bvid'] });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('IndexedDB unavailable'));
   }));
+  const range = (uid: string) => IDBKeyRange.bound([uid, ''], [uid, INDEXED_DB_STRING_MAX]);
   const tx = async <T>(store: string, mode: IDBTransactionMode, action: (objectStore: IDBObjectStore) => IDBRequest): Promise<T> => {
     const db = await open();
-    return new Promise((resolve, reject) => { const request = action(db.transaction(store, mode).objectStore(store)); request.onsuccess = () => resolve(request.result as T); request.onerror = () => reject(request.error); });
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(store, mode);
+      const request = action(transaction.objectStore(store));
+      // 请求成功不等于事务提交成功，尤其不能提前报告历史认领成功。
+      transaction.oncomplete = () => resolve(request.result as T);
+      transaction.onabort = transaction.onerror = () => reject(transaction.error ?? request.error ?? new Error('IndexedDB transaction failed'));
+    });
+  };
+  const updateRows = async <T extends { bvid: string }, R>(name: string, uid: string, update: (existing: T[]) => { rows: T[]; result: R }): Promise<R> => {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(name, 'readwrite');
+      const store = transaction.objectStore(name);
+      const read = store.getAll(range(uid));
+      let result: R;
+      read.onsuccess = () => {
+        const existing = read.result as T[];
+        const updated = update(existing);
+        result = updated.result;
+        const keep = new Set(updated.rows.map((item) => item.bvid));
+        for (const old of existing) if (!keep.has(old.bvid)) store.delete([uid, old.bvid]);
+        for (const item of updated.rows) store.put({ ...item, uid });
+      };
+      transaction.oncomplete = () => resolve(result);
+      transaction.onabort = transaction.onerror = () => reject(transaction.error ?? read.error ?? new Error('IndexedDB transaction failed'));
+    });
   };
   return {
     async getSnapshot(uid) { const value = await tx<FavoriteTagSnapshot | undefined>('snapshots', 'readonly', (s) => s.get(uid)); return value && isFresh(value, FAVORITE_SNAPSHOT_TTL) ? value : null; },
     async putSnapshot(snapshot) { await tx('snapshots', 'readwrite', (s) => s.put(snapshot)); },
-    async getCandidates(uid) { const values = await tx<SearchCandidate[]>('candidates', 'readonly', (s) => s.getAll(IDBKeyRange.bound([uid, ''], [uid, INDEXED_DB_STRING_MAX]))); return pruneTtl(values ?? [], FAVORITE_CANDIDATE_TTL, FAVORITE_MAX_CANDIDATES); },
-    async putCandidates(uid, candidates) { const db = await open(); await new Promise<void>((resolve, reject) => { const t = db.transaction('candidates', 'readwrite'); const s = t.objectStore('candidates'); const read = s.getAll(IDBKeyRange.bound([uid, ''], [uid, INDEXED_DB_STRING_MAX])); read.onsuccess = () => { const existing = read.result as Array<SearchCandidate & { uid: string }>; const map = new Map(existing.map((item) => [item.bvid, item])); for (const candidate of candidates) map.set(candidate.bvid, { ...candidate, uid }); const keep = pruneTtl([...map.values()], FAVORITE_CANDIDATE_TTL, FAVORITE_MAX_CANDIDATES); const keepIds = new Set(keep.map((item) => item.bvid)); for (const old of existing) if (!keepIds.has(old.bvid)) s.delete([uid, old.bvid]); for (const candidate of keep) s.put({ ...candidate, uid }); }; read.onerror = () => reject(read.error); t.oncomplete = () => resolve(); t.onerror = () => reject(t.error); }); },
-    async getHistory(uid) { const values = await tx<PushedHistory[]>('history', 'readonly', (s) => s.getAll(IDBKeyRange.bound([uid, ''], [uid, INDEXED_DB_STRING_MAX]))); return pruneTtl(values ?? [], FAVORITE_HISTORY_TTL, FAVORITE_MAX_HISTORY); },
-    async putHistory(uid, history) { const db = await open(); const keep = pruneTtl(history, FAVORITE_HISTORY_TTL, FAVORITE_MAX_HISTORY); await new Promise<void>((resolve, reject) => { const t = db.transaction('history', 'readwrite'); const s = t.objectStore('history'); const read = s.getAll(IDBKeyRange.bound([uid, ''], [uid, INDEXED_DB_STRING_MAX])); read.onsuccess = () => { for (const old of (read.result as Array<PushedHistory & { uid: string }>)) if (!keep.some((item) => item.bvid === old.bvid)) s.delete([uid, old.bvid]); for (const item of keep) s.put({ ...item, uid }); }; read.onerror = () => reject(read.error); t.oncomplete = () => resolve(); t.onerror = () => reject(t.error); }); },
-    async clear(uid) { if (uid) { await tx('snapshots', 'readwrite', (s) => s.delete(uid)); } else { const db = await open(); await Promise.all(['snapshots', 'candidates', 'history'].map((name) => new Promise<void>((resolve, reject) => { const t = db.transaction(name, 'readwrite'); t.objectStore(name).clear(); t.oncomplete = () => resolve(); t.onerror = () => reject(t.error); }))); } },
+    async getCandidates(uid) { const values = await tx<SearchCandidate[]>('candidates', 'readonly', (s) => s.getAll(range(uid))); return pruneTtl(values, FAVORITE_CANDIDATE_TTL, FAVORITE_MAX_CANDIDATES); },
+    async putCandidates(uid, candidates) {
+      await updateRows<SearchCandidate, void>('candidates', uid, (existing) => ({ rows: pruneTtl(mergeSearchCandidates([...existing, ...candidates]), FAVORITE_CANDIDATE_TTL, FAVORITE_MAX_CANDIDATES), result: undefined }));
+    },
+    async getHistory(uid) { const values = await tx<OwnedHistory[]>('history', 'readonly', (s) => s.getAll(range(uid))); return pruneTtl(values, FAVORITE_HISTORY_TTL, FAVORITE_MAX_HISTORY); },
+    async putHistory(uid, history) { await updateRows<OwnedHistory, void>('history', uid, (existing) => ({ rows: mergeHistory(existing, history), result: undefined })); },
+    async claimHistory(uid, history, owner) {
+      return updateRows<OwnedHistory, string[]>('history', uid, (existing) => {
+        const { rows, claimed } = claimRows(existing, history, owner);
+        return { rows, result: claimed };
+      });
+    },
+    async releaseHistory(uid, bvids, owner) {
+      const ids = new Set(bvids);
+      await updateRows<OwnedHistory, void>('history', uid, (existing) => ({ rows: existing.filter((item) => item.owner !== owner || !ids.has(item.bvid)), result: undefined }));
+    },
+    async clear(uid) {
+      await Promise.all(['snapshots', 'candidates', 'history'].map((name) => tx(name, 'readwrite', (s) => uid ? s.delete(name === 'snapshots' ? uid : range(uid)) : s.clear())));
+    },
   };
 }
 
 function memoryStore(): FavoriteStore {
-  return { async getSnapshot(uid) { const item = memoryBucket.snapshots.get(uid); return item && isFresh(item, FAVORITE_SNAPSHOT_TTL) ? item : null; }, async putSnapshot(value) { memoryBucket.snapshots.set(value.uid, value); }, async getCandidates(uid) { return pruneTtl(memoryBucket.candidates.get(uid) ?? [], FAVORITE_CANDIDATE_TTL, FAVORITE_MAX_CANDIDATES); }, async putCandidates(uid, values) { memoryBucket.candidates.set(uid, pruneTtl([...(memoryBucket.candidates.get(uid) ?? []), ...values], FAVORITE_CANDIDATE_TTL, FAVORITE_MAX_CANDIDATES)); }, async getHistory(uid) { return pruneTtl(memoryBucket.history.get(uid) ?? [], FAVORITE_HISTORY_TTL, FAVORITE_MAX_HISTORY); }, async putHistory(uid, values) { memoryBucket.history.set(uid, pruneTtl(values, FAVORITE_HISTORY_TTL, FAVORITE_MAX_HISTORY)); }, async clear(uid) { if (uid) { memoryBucket.snapshots.delete(uid); memoryBucket.candidates.delete(uid); memoryBucket.history.delete(uid); } else { memoryBucket.snapshots.clear(); memoryBucket.candidates.clear(); memoryBucket.history.clear(); } } };
+  return {
+    async getSnapshot(uid) { const item = memoryBucket.snapshots.get(uid); return item && isFresh(item, FAVORITE_SNAPSHOT_TTL) ? structuredClone(item) : null; },
+    async putSnapshot(value) { memoryBucket.snapshots.set(value.uid, structuredClone(value)); },
+    async getCandidates(uid) { return pruneTtl(memoryBucket.candidates.get(uid) ?? [], FAVORITE_CANDIDATE_TTL, FAVORITE_MAX_CANDIDATES); },
+    async putCandidates(uid, values) { memoryBucket.candidates.set(uid, pruneTtl(mergeSearchCandidates([...(memoryBucket.candidates.get(uid) ?? []), ...values]), FAVORITE_CANDIDATE_TTL, FAVORITE_MAX_CANDIDATES)); },
+    async getHistory(uid) { return pruneTtl(memoryBucket.history.get(uid) ?? [], FAVORITE_HISTORY_TTL, FAVORITE_MAX_HISTORY); },
+    async putHistory(uid, values) { memoryBucket.history.set(uid, mergeHistory(memoryBucket.history.get(uid) ?? [], values)); },
+    async claimHistory(uid, values, owner) {
+      const { rows, claimed } = claimRows(memoryBucket.history.get(uid) ?? [], values, owner);
+      memoryBucket.history.set(uid, rows);
+      return claimed;
+    },
+    async releaseHistory(uid, bvids, owner) {
+      const ids = new Set(bvids);
+      memoryBucket.history.set(uid, (memoryBucket.history.get(uid) ?? []).filter((item) => item.owner !== owner || !ids.has(item.bvid)));
+    },
+    async clear(uid) {
+      if (uid) { memoryBucket.snapshots.delete(uid); memoryBucket.candidates.delete(uid); memoryBucket.history.delete(uid); }
+      else { memoryBucket.snapshots.clear(); memoryBucket.candidates.clear(); memoryBucket.history.clear(); }
+    },
+  };
 }
 
 export const rankFavoriteTags = scoreFavoriteTags;

@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   cleanSearchTitle, createFavoriteSnapshot, createFavoriteHomeFillStore, normalizeFavoriteFolders, normalizeFavoriteVideos, normalizeSearchCandidates, scoreFavoriteTags,
-  selectHomeFillCandidates,
+  selectHomeFillCandidates, sampleFavoriteTags, mergeSearchCandidates, FAVORITE_HISTORY_TTL,
 } from '../../src/core/favorite-home-fill';
 
 describe('favorite home fill core', () => {
@@ -40,9 +40,70 @@ describe('favorite home fill core', () => {
       Array.from({ length: 6 }, (_, index) => ({ bvid: `BV${tag}${index}`, pubdate: 1 })),
     } }, [tag]));
     expect(selectHomeFillCandidates(candidates, scores, 3, 100).map((item) => item.sourceTag)).toEqual(['a', 'b', 'c']);
-    const selected = selectHomeFillCandidates(candidates, scores, 7, 100);
-    expect(selected.map((item) => item.sourceTag)).toEqual(['a', 'b', 'c', 'a', 'a', 'a', 'b']);
-    expect(selected.filter((item) => item.sourceTag === 'a').map((item) => item.bvid)).toEqual(['BVa0', 'BVa1', 'BVa2', 'BVa3']);
+    const selected = selectHomeFillCandidates(candidates, scores, 7, 100, [], [], undefined, () => 0);
+    expect(selected.map((item) => item.sourceTag)).toEqual(['a', 'b', 'c', 'a', 'a', 'a', 'a']);
+    expect(selected.filter((item) => item.sourceTag === 'a').map((item) => item.bvid)).toEqual(['BVa1', 'BVa0', 'BVa2', 'BVa3', 'BVa4']);
+  });
+
+  it('samples beyond the highest five and reduces only the last two rounds of weights', () => {
+    const scores = scoreFavoriteTags([{ bvid: 'F', tags: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], favoritedAt: 1 }]);
+    const sampled = sampleFavoriteTags(scores, [['g'], ['a'], ['f']], () => 0.999);
+    expect(sampled.map((item) => item.tag)).toEqual(['g', 'f', 'e', 'd', 'c']);
+    expect(sampled[0].weight).toBeCloseTo(Math.sqrt(scores[0].score));
+    expect(sampled[1].weight).toBeCloseTo(Math.sqrt(scores[0].score) * 0.35);
+    expect(new Set(sampled.map((item) => item.tag)).size).toBe(5);
+    expect(sampleFavoriteTags([{ ...scores[0], score: 0 }, { ...scores[1], score: NaN }])).toEqual([]);
+    expect(sampleFavoriteTags(scores.slice(0, 2), [['a', 'b']], () => 0.999).map((item) => item.tag)).toEqual(['b', 'a']);
+  });
+
+  it('randomizes within groups and merges shared BV sources without duplicating a card', () => {
+    const scores = scoreFavoriteTags([{ bvid: 'F', tags: ['a', 'b'], favoritedAt: 1 }]);
+    const candidates = [
+      ...normalizeSearchCandidates([{ bvid: 'BVshared', pubdate: 1 }, { bvid: 'BVa', pubdate: 1 }], ['a'], 1),
+      ...normalizeSearchCandidates([{ bvid: 'BVshared', pubdate: 1 }, { bvid: 'BVb', pubdate: 1 }], ['b'], 2),
+    ];
+    expect(mergeSearchCandidates(candidates).find((item) => item.bvid === 'BVshared')?.tags).toEqual(['a', 'b']);
+    const selected = selectHomeFillCandidates(candidates, scores, 5, 100, [], [], undefined, () => 0.999);
+    expect(selected.map((item) => item.bvid)).toEqual(['BVa', 'BVshared', 'BVb']);
+    expect(selected.map((item) => item.sourceTag)).toEqual(['a', 'b', 'b']);
+    expect(selectHomeFillCandidates(candidates, scores, 5, 100, ['BVa'], ['BVb'], undefined, () => 0)).toHaveLength(1);
+  });
+
+  it('preserves source coverage when a shared BV is the only candidate for another tag', () => {
+    const scores = scoreFavoriteTags([{ bvid: 'F', tags: ['a', 'b'], favoritedAt: 1 }]);
+    const candidates = [
+      ...normalizeSearchCandidates([{ bvid: 'BVshared', pubdate: 1 }, { bvid: 'BVa', pubdate: 1 }], ['a']),
+      ...normalizeSearchCandidates([{ bvid: 'BVshared', pubdate: 1 }], ['b']),
+    ];
+    const selected = selectHomeFillCandidates(candidates, scores, 2, 100, [], [], undefined, () => 0.999);
+    expect(selected.map((item) => [item.bvid, item.sourceTag])).toEqual([['BVa', 'a'], ['BVshared', 'b']]);
+    const reversed = selectHomeFillCandidates(candidates, [...scores].reverse(), 1, 100, [], [], undefined, () => 0);
+    expect(reversed[0].sourceTag).toBe('b');
+  });
+
+  it('merges fallback candidates and history and makes competing claims owner-safe', async () => {
+    const store = createFavoriteHomeFillStore({ indexedDB: undefined });
+    const other = createFavoriteHomeFillStore({ indexedDB: undefined });
+    const uid = 'core-claims';
+    await store.clear(uid);
+    const now = Date.now();
+    await store.putCandidates(uid, normalizeSearchCandidates([{ bvid: 'BV1', pubdate: 1 }], ['a'], now));
+    await store.putCandidates(uid, normalizeSearchCandidates([{ bvid: 'BV1', pubdate: 1 }], ['b'], now));
+    expect(await store.getCandidates(uid)).toEqual([expect.objectContaining({ bvid: 'BV1', tags: ['a', 'b'] })]);
+    await store.putHistory(uid, [{ bvid: 'BVold', pushedAt: now }]);
+    await other.putHistory(uid, [{ bvid: 'BVother', pushedAt: now }]);
+    const claims = await Promise.all([
+      store.claimHistory(uid, [{ bvid: 'BVclaim', pushedAt: now }], 'first'),
+      other.claimHistory(uid, [{ bvid: 'BVclaim', pushedAt: now }], 'second'),
+    ]);
+    expect(claims).toEqual([['BVclaim'], []]);
+    await other.releaseHistory(uid, ['BVclaim', 'BVold'], 'second');
+    expect((await store.getHistory(uid)).map((item) => item.bvid)).toEqual(['BVold', 'BVother', 'BVclaim']);
+    await store.releaseHistory(uid, ['BVclaim', 'BVold'], 'first');
+    expect((await store.getHistory(uid)).map((item) => item.bvid)).toEqual(['BVold', 'BVother']);
+    await store.putHistory(uid, [{ bvid: 'BVexpired', pushedAt: now - FAVORITE_HISTORY_TTL - 1 }]);
+    expect(await other.claimHistory(uid, [{ bvid: 'BVexpired', pushedAt: now }], 'second')).toEqual(['BVexpired']);
+    await store.clear(uid);
   });
 
   it('cleans search highlight markup and HTML entities from titles', () => {
@@ -67,6 +128,25 @@ describe('favorite home fill core', () => {
     await store.putSnapshot(createFavoriteSnapshot('b', ['2'], []));
     expect((await store.getSnapshot('a'))?.uid).toBe('a');
     expect((await store.getSnapshot('b'))?.uid).toBe('b');
+  });
+
+  it('isolates persisted fallback snapshots from later input and output mutations', async () => {
+    const store = createFavoriteHomeFillStore({ indexedDB: undefined });
+    const snapshot = createFavoriteSnapshot('snapshot-clone', ['1'], []);
+    snapshot.nextSearchPages = { music: 2 };
+    snapshot.recentTagRounds = [['music']];
+    await store.putSnapshot(snapshot);
+    snapshot.nextSearchPages.music = 3;
+    snapshot.recentTagRounds[0].push('games');
+    const loaded = (await store.getSnapshot(snapshot.uid))!;
+    expect(loaded.nextSearchPages).toEqual({ music: 2 });
+    expect(loaded.recentTagRounds).toEqual([['music']]);
+    loaded.nextSearchPages!.music = 4;
+    loaded.recentTagRounds![0].push('film');
+    const persisted = (await store.getSnapshot(snapshot.uid))!;
+    expect(persisted.nextSearchPages).toEqual({ music: 2 });
+    expect(persisted.recentTagRounds).toEqual([['music']]);
+    await store.clear(snapshot.uid);
   });
 
   it('normalizes common favorite resource aliases', () => {

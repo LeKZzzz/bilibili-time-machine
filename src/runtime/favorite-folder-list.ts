@@ -39,13 +39,13 @@ function parseFolders(raw: string | null): FavoriteFolderOption[] | null {
 
 /**
  * 创建收藏夹名称列表加载器：按账号持久缓存完整列表，手动 force 刷新成功后才替换。
- * 关闭补位后不发起任何请求（包括 UID 查询），分页中途关闭也会停止后续请求。
+ * 仅在调用方允许读取时发起请求，分页中途关闭也会停止后续请求。
  */
 export function createFavoriteFolderLoader(
   request: typeof fetch,
   isEnabled: () => boolean,
   storage?: Storage,
-): (force?: boolean) => Promise<FavoriteFolderOption[]> {
+): (force?: boolean, isActive?: () => boolean) => Promise<FavoriteFolderOption[]> {
   const memory = new Map<string, FavoriteFolderOption[]>();
   const resolveStorage = (): Storage | null => {
     if (storage) return storage;
@@ -82,15 +82,16 @@ export function createFavoriteFolderLoader(
       // 配额或隐私模式导致写入失败时保留当前页面内存缓存。
     }
   };
-  return async (force = false): Promise<FavoriteFolderOption[]> => {
-    if (!isEnabled()) throw new Error('favorite folder loading disabled');
+  return async (force = false, isActive = () => true): Promise<FavoriteFolderOption[]> => {
+    const allowed = (): boolean => isEnabled() && isActive();
+    if (!allowed()) throw new Error('favorite folder loading disabled');
     const uid = await resolveBilibiliUid(request);
     if (!uid) throw new Error('uid unavailable');
-    if (!isEnabled()) throw new Error('favorite folder loading disabled');
+    if (!allowed()) throw new Error('favorite folder loading disabled');
     const cached = readCache(uid);
     if (cached && !force) return copyFolders(cached);
-    const folders = await loadFavoriteFolders(request, uid, isEnabled);
-    if (!isEnabled()) throw new Error('favorite folder loading disabled');
+    const folders = await loadFavoriteFolders(request, uid, allowed);
+    if (!allowed()) throw new Error('favorite folder loading disabled');
     writeCache(uid, folders);
     return copyFolders(folders);
   };
