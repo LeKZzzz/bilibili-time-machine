@@ -169,7 +169,7 @@ npm run build:dev
 
 `.github/workflows/release.yml` 仅在用户**发布 GitHub Release**（`release: published`）后触发；只推送标签不会自动创建 Release。它 checkout 该 Release 的 tag，使用 Node.js 22 执行 `npm ci`、`npm run build`（已含类型检查和全量测试），检查版本一致性，再打包并上传上述三份生产附件，不上传开发日志版。
 
-1. 在 `dev` 完成改动和验证，确定发布版本，将 `package.json`、`package-lock.json` 的根版本、`extension/manifest.json` 和 `vite.config.ts` 的油猴版本统一为 `X.Y.Z`。目前前几项为 `0.1.0`，油猴为 `0.1.1`，发布前仍须统一；工作流会阻止版本与 `vX.Y.Z` tag 不一致的附件上传，不会自动选择新版本。
+1. 在 `dev` 完成改动和验证，确定发布版本，将 `package.json`、`package-lock.json` 的根版本、`extension/manifest.json` 和 `vite.config.ts` 的油猴版本统一为 `X.Y.Z`。工作流会阻止版本与 `vX.Y.Z` tag 不一致的附件上传，不会自动选择新版本。
 2. 经确认，将公开改动整理为 `main` 上一个新提交，保留已有 `main` 历史，不合并 `dev` 的内部历史、不强推。公开分支保留运行所需文件和工作流，不带内部资料、本地环境、凭据或生成产物；用 `git ls-tree -r --name-only main` 检查发布范围。
 3. 经确认推送，在该公开提交上创建 `vX.Y.Z` 标签并发布 Release。草稿未发布不触发附件构建。
 4. 检查 Actions 运行及三份附件，下载解压后验证扩展和油猴安装。安装、检查、测试、构建、版本检查或打包失败不会进入上传；上传中途失败可能留下部分附件，可重跑以 `gh release upload --clobber` 覆盖补齐同名文件，不删除其他附件或改写标签。
