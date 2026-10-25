@@ -14,7 +14,7 @@ const userScriptBanner = `// ==UserScript==
 // @namespace    https://github.com/bilibili-time-filter
 // @homepageURL  https://github.com/LeKZzzz/bilibili-time-machine
 // @supportURL   https://github.com/LeKZzzz/bilibili-time-machine/issues
-// @version      0.2.0
+// @version      0.2.1
 // @description  只显示早于本地截止时间的当前 B 站内容
 // @license      MIT
 // @match        https://www.bilibili.com/*

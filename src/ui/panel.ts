@@ -75,44 +75,46 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     <div class="shell">
       <button class="toggle ui-btn ui-btn-sm" type="button" aria-expanded="false">时光机</button>
       <section class="card" hidden aria-label="B站时光机设置">
-        <div id="main-view">
+        <div id="main-view" class="panel-view">
           <header class="title">
             <div><div class="brand">时光机</div><div class="subtitle">只看截止时间之前的内容</div></div>
             <div class="heading-actions"><span id="filter-state" class="state ui-badge" role="status"></span><button class="close ui-btn ui-btn-ghost ui-btn-xs" type="button" aria-label="关闭设置面板">×</button></div>
           </header>
-          <section class="section" aria-label="时间设置">
-            <div class="row"><span class="section-label">截止时间<span class="description">本地时间 · 精确到秒</span></span><input id="enabled" type="checkbox" hidden><button id="filter-control" class="filter-control ui-btn ui-btn-sm" type="button"></button></div>
-            <input id="cutoff" type="hidden">
-            <div class="cutoff-grid">
-              <div class="field"><label class="field-label" for="cutoff-date">日期</label><input id="cutoff-date" class="ui-input ui-input-sm" type="date" aria-label="截止日期"></div>
-              <div class="field"><label class="field-label" for="cutoff-time">时间</label><input id="cutoff-time" class="ui-input ui-input-sm" type="time" step="1" aria-label="截止时间（含秒）"></div>
-            </div>
-            <div class="presets" aria-label="快捷时间"><button class="preset ui-btn ui-btn-xs" type="button" data-preset="now">现在</button><button class="preset ui-btn ui-btn-xs" type="button" data-preset="today">今天</button><button class="preset ui-btn ui-btn-xs" type="button" data-preset="yesterday">昨天</button><button class="preset ui-btn ui-btn-xs" type="button" data-preset="week">7 天前</button><button id="fill-current-time" class="time-fill preset ui-btn ui-btn-xs" type="button" aria-label="填入当前时分秒，保留已选日期">填入当前时间</button></div>
-            <div class="time-actions"><span id="time-draft-status" role="status" aria-live="polite"></span><button id="time-cancel" class="ui-btn ui-btn-ghost ui-btn-sm" type="button">取消</button><button id="time-apply" class="ui-btn ui-btn-primary ui-btn-sm" type="button">应用时间</button></div>
-            <label class="row"><span>自动推进时间<span class="description" style="display:block">每经过 1 分钟，截止时间推进 1 分钟</span></span><input id="auto-advance" class="ui-toggle ui-toggle-primary ui-toggle-sm" type="checkbox"></label>
-          </section>
-          <section class="favorite section" aria-label="收藏标签补位">
-            <div class="row"><span class="setting-label section-label"><label for="favorite-enabled">收藏偏好补充首页</label><button class="help" type="button" data-help="favorite-enabled" aria-label="收藏补位说明">?</button></span><input id="favorite-enabled" class="ui-toggle ui-toggle-primary ui-toggle-sm" type="checkbox" aria-label="启用收藏标签首页补位"></div>
-            <div class="description favorite-description">根据收藏偏好，填补首页被过滤的空位</div>
-            <div id="favorite-content" hidden>
-              <div class="favorite-summary row"><span id="favorite-selection-summary" class="favorite-folder-status"></span><span class="setting-label"><button id="favorite-folders-open" type="button" class="text-button ui-btn ui-btn-ghost ui-btn-sm">选择收藏夹</button><button class="help" type="button" data-help="favorite-selection" aria-label="收藏夹选择说明">?</button></span></div>
-              <div id="favorite-work-status" class="work-status" role="status" aria-live="polite"></div>
-              <div id="favorite-snapshot" class="description"></div>
-              <button id="favorite-next" type="button" class="text-button ui-btn ui-btn-ghost ui-btn-sm" hidden></button>
-              <div class="favorite-actions">
-                <button id="favorite-continue" type="button" class="ui-btn ui-btn-sm">继续寻找</button>
-                <span class="setting-label"><button id="favorite-tags" type="button" class="text-button ui-btn ui-btn-ghost ui-btn-sm">查看兴趣标签</button><button class="help" type="button" data-help="favorite-tags" aria-label="当前收藏标签说明">?</button></span>
-                <span class="setting-label"><button id="favorite-refresh" type="button" class="ui-btn ui-btn-primary ui-btn-sm">更新收藏偏好</button><button class="help" type="button" data-help="favorite-refresh" aria-label="更新收藏偏好说明">?</button></span>
+          <div class="panel-body">
+            <section class="section" aria-label="时间设置">
+              <div class="row"><span class="section-label">截止时间<span class="description">本地时间 · 精确到秒</span></span><input id="enabled" type="checkbox" hidden><button id="filter-control" class="filter-control ui-btn ui-btn-sm" type="button"></button></div>
+              <input id="cutoff" type="hidden">
+              <div class="cutoff-grid">
+                <div class="field"><label class="field-label" for="cutoff-date">日期</label><input id="cutoff-date" class="ui-input ui-input-sm" type="date" aria-label="截止日期"></div>
+                <div class="field"><label class="field-label" for="cutoff-time">时间</label><input id="cutoff-time" class="ui-input ui-input-sm" type="time" step="1" aria-label="截止时间（含秒）"></div>
               </div>
-            </div>
-          </section>
-          <details class="advanced section">
-            <summary>高级设置</summary>
-            <div class="row"><label for="budget">补请求数量上限<span class="description" style="display:block">卡片缺少发布时间时，补查视频详情</span></label><input id="budget" class="ui-input ui-input-sm" type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="每页补请求数量"></div>
-          </details>
+              <div class="presets" aria-label="快捷时间"><button class="preset ui-btn ui-btn-xs" type="button" data-preset="now">现在</button><button class="preset ui-btn ui-btn-xs" type="button" data-preset="today">今天</button><button class="preset ui-btn ui-btn-xs" type="button" data-preset="yesterday">昨天</button><button class="preset ui-btn ui-btn-xs" type="button" data-preset="week">7 天前</button><button id="fill-current-time" class="time-fill preset ui-btn ui-btn-xs" type="button" aria-label="填入当前时分秒，保留已选日期">填入当前时间</button></div>
+              <div class="time-actions"><span id="time-draft-status" role="status" aria-live="polite"></span><button id="time-cancel" class="ui-btn ui-btn-ghost ui-btn-sm" type="button">取消</button><button id="time-apply" class="ui-btn ui-btn-primary ui-btn-sm" type="button">应用时间</button></div>
+              <label class="row"><span>自动推进时间<span class="description" style="display:block">每经过 1 分钟，截止时间推进 1 分钟</span></span><input id="auto-advance" class="ui-toggle ui-toggle-primary ui-toggle-sm" type="checkbox"></label>
+            </section>
+            <section class="favorite section" aria-label="收藏标签补位">
+              <div class="row"><span class="setting-label section-label"><label for="favorite-enabled">收藏偏好补充首页</label><button class="help" type="button" data-help="favorite-enabled" aria-label="收藏补位说明">?</button></span><input id="favorite-enabled" class="ui-toggle ui-toggle-primary ui-toggle-sm" type="checkbox" aria-label="启用收藏标签首页补位"></div>
+              <div class="description favorite-description">根据收藏偏好，填补首页被过滤的空位</div>
+              <div id="favorite-content" hidden>
+                <div class="favorite-summary row"><span id="favorite-selection-summary" class="favorite-folder-status"></span><span class="setting-label"><button id="favorite-folders-open" type="button" class="text-button ui-btn ui-btn-ghost ui-btn-sm">选择收藏夹</button><button class="help" type="button" data-help="favorite-selection" aria-label="收藏夹选择说明">?</button></span></div>
+                <div id="favorite-work-status" class="work-status" role="status" aria-live="polite"></div>
+                <div id="favorite-snapshot" class="favorite-snapshot description"><span id="favorite-counts"></span><time id="favorite-updated"></time></div>
+                <button id="favorite-next" type="button" class="text-button ui-btn ui-btn-ghost ui-btn-sm" hidden></button>
+                <div class="favorite-actions">
+                  <span id="favorite-continue-action" class="setting-label"><button id="favorite-continue" type="button" class="ui-btn ui-btn-sm">继续寻找</button><button class="help" type="button" data-help="favorite-continue" aria-label="继续寻找的用途">?</button></span>
+                  <span class="setting-label"><button id="favorite-tags" type="button" class="text-button ui-btn ui-btn-ghost ui-btn-sm">查看兴趣标签</button><button class="help" type="button" data-help="favorite-tags" aria-label="当前收藏标签说明">?</button></span>
+                  <span class="setting-label favorite-refresh-action"><button id="favorite-refresh" type="button" class="ui-btn ui-btn-sm">更新收藏偏好</button><button class="help" type="button" data-help="favorite-refresh" aria-label="更新收藏偏好说明">?</button></span>
+                </div>
+              </div>
+            </section>
+            <details class="advanced section">
+              <summary>高级设置</summary>
+              <div class="row"><label for="budget">补请求数量上限<span class="description" style="display:block">卡片缺少发布时间时，补查视频详情</span></label><input id="budget" class="ui-input ui-input-sm" type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="每页补请求数量"></div>
+            </details>
+          </div>
           <footer class="panel-footer"><div class="status" role="status" aria-live="polite"></div><div class="hint">仅保留严格早于截止时间的内容</div></footer>
         </div>
-        <section id="favorite-folders-dialog" class="tag-dialog" role="region" aria-labelledby="favorite-folders-title" hidden>
+        <section id="favorite-folders-dialog" class="tag-dialog panel-view" role="region" aria-labelledby="favorite-folders-title" hidden>
           <header class="tag-dialog-title"><div><div id="favorite-folders-title" class="brand">管理收藏夹</div><div class="subtitle">保存后生效；返回不保存本次调整</div></div><button id="favorite-folders-close" class="text-button ui-btn ui-btn-ghost ui-btn-sm" type="button" aria-label="取消并返回设置">返回</button></header>
           <div class="dialog-body">
             <div class="row"><span id="favorite-folders-count" class="tag-dialog-status" role="status" aria-live="polite"></span><button class="help" type="button" data-help="favorite-selection" aria-label="收藏夹选择数量说明">?</button></div>
@@ -125,10 +127,10 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
               <div class="row"><span class="setting-label"><label for="favorite-video-limit">每夹视频上限</label><button class="help" type="button" data-help="favorite-video-limit" aria-label="每夹视频上限说明">?</button></span><input id="favorite-video-limit" class="ui-input ui-input-sm" type="number" min="1" max="200" step="1" aria-label="每夹视频上限"></div>
             </div>
             <div id="favorite-folders-validation" class="validation" role="status" aria-live="polite"></div>
-            <div class="dialog-actions"><button id="favorite-folders-cancel" type="button" class="ui-btn ui-btn-sm">取消</button><button id="favorite-folders-save" type="button" class="ui-btn ui-btn-primary ui-btn-sm">保存</button></div>
           </div>
+          <footer class="dialog-actions"><button id="favorite-folders-cancel" type="button" class="ui-btn ui-btn-sm">取消</button><button id="favorite-folders-save" type="button" class="ui-btn ui-btn-primary ui-btn-sm">保存</button></footer>
         </section>
-        <section id="favorite-tags-dialog" class="tag-dialog" role="region" aria-labelledby="favorite-tags-title" hidden>
+        <section id="favorite-tags-dialog" class="tag-dialog panel-view" role="region" aria-labelledby="favorite-tags-title" hidden>
           <header class="tag-dialog-title"><span id="favorite-tags-title" class="brand">当前收藏标签</span><button id="favorite-tags-close" class="text-button ui-btn ui-btn-ghost ui-btn-sm" type="button" aria-label="返回设置">返回</button></header>
           <div class="dialog-body"><div id="favorite-tags-status" class="tag-dialog-status" role="status" aria-live="polite"></div><ol id="favorite-tags-list" class="tag-list"></ol></div>
         </section>
@@ -184,7 +186,10 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
   const timeDraftStatus = shadow.querySelector<HTMLElement>('#time-draft-status')!;
   const favoriteWorkStatus = shadow.querySelector<HTMLElement>('#favorite-work-status')!;
   const favoriteSnapshot = shadow.querySelector<HTMLElement>('#favorite-snapshot')!;
+  const favoriteCounts = shadow.querySelector<HTMLElement>('#favorite-counts')!;
+  const favoriteUpdated = shadow.querySelector<HTMLTimeElement>('#favorite-updated')!;
   const favoriteContinue = shadow.querySelector<HTMLButtonElement>('#favorite-continue')!;
+  const favoriteContinueAction = shadow.querySelector<HTMLElement>('#favorite-continue-action')!;
   const favoriteNext = shadow.querySelector<HTMLButtonElement>('#favorite-next')!;
   let current = normaliseConfig(options.config);
   let timeDirty = false;
@@ -206,6 +211,7 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     'favorite-folder-limit': '最多同时选择 1–10 个收藏夹，所有选中项都参与读取。降低上限后若已选数量超限，需先取消部分选择才能保存。',
     'favorite-video-limit': '每个选中收藏夹最多读取 1–200 条最近收藏的视频，用于提取内容标签，不会读取夹内全部视频。数量越大，请求越多。',
     'favorite-refresh': '重新读取所选收藏视频及其标签，不刷新收藏夹名称列表。页面会显示实际更新进度与结果，关闭补位开关可停止任务。',
+    'favorite-continue': '首页还有空位时，再寻找一轮符合截止时间的视频。只填空位，不会替换已显示的视频；没有合适结果时仍会留空。',
     'favorite-tags': '查看所选收藏视频生成的当前标签及命中视频数；不是收藏夹名称，也不是搜索推荐词。需先开启收藏补位并选择收藏夹。',
   };
   for (const help of shadow.querySelectorAll<HTMLElement>('[data-help]')) {
@@ -237,6 +243,7 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     help.addEventListener('focus', () => showTooltip(help));
     help.addEventListener('blur', hideTooltip);
   }
+  shadow.addEventListener('scroll', hideTooltip, true);
   const closeDialog = (): void => {
     if (!activeDialog) return;
     tagGeneration += 1;
@@ -245,7 +252,6 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     activeDialog = null;
     hideTooltip();
     mainView.hidden = false;
-    card.scrollTop = 0;
     dialogOpener?.focus();
     dialogOpener = null;
     renderFavoriteControls();
@@ -256,7 +262,8 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     activeDialog = dialog;
     mainView.hidden = true;
     dialog.hidden = false;
-    card.scrollTop = 0;
+    dialog.querySelector<HTMLElement>('.dialog-body')!.scrollTop = 0;
+    favoriteFolders.scrollTop = 0;
     firstFocus.focus();
   };
   const validateDraft = (): boolean => {
@@ -325,17 +332,29 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     favoriteRefresh.disabled = disabled || !selectedCount || overLimit || busy;
     favoriteTags.disabled = disabled || !selectedCount || overLimit;
     const names = (current.favoriteFolderIds ?? []).map((id) => favoriteFolderOptions.find((folder) => folder.id === id)?.title ?? `收藏夹 ${id}`);
-    favoriteSelectionSummary.textContent = overLimit ? `已选 ${selectedCount} 个，超出上限，请调整` : names.join('、') || '尚未选择收藏夹';
+    favoriteSelectionSummary.textContent = overLimit ? `已选 ${selectedCount} 个，超出上限` : selectedCount > 1 ? `已选 ${selectedCount} 个收藏夹` : names[0] || '尚未选择收藏夹';
+    favoriteSelectionSummary.title = names.join('、');
     const reason = !selectedCount ? 'no-folders' : disabled ? 'disabled' : workState.reason;
     const reasons: Record<string, string> = { disabled: '收藏补位已关闭，来源偏好保留', 'no-folders': '选择收藏夹，建立你的内容偏好', paused: '偏好已保留，开启时间过滤后补充首页', 'no-cutoff': '请先设置并应用截止时间', 'not-home': '偏好已保存，仅在首页补充；此处仍可更新偏好', 'no-tags': '没有可用的兴趣标签，请更换来源或更新偏好', 'no-results': '本轮没有符合日期的视频，可以继续寻找' };
     const stages = { preferences: '收藏偏好更新', search: '候选搜索', storage: '结果保存' };
+    favoriteWorkStatus.dataset.phase = workState.phase;
     favoriteWorkStatus.textContent = !disabled && workState.phase === 'updating' ? '正在更新收藏偏好…'
       : !disabled && workState.phase === 'searching' ? '正在寻找符合日期的视频…'
       : !disabled && workState.phase === 'error' ? `${stages[workState.errorStage ?? 'preferences']}失败，${workState.hasCachedPreferences ? '已保留仍可用的旧偏好，' : ''}请重试`
       : reason ? reasons[reason] : workState.phase === 'filled' ? `本轮已补充 ${workState.insertedCount ?? 0} 个视频` : workState.phase === 'ready' ? '收藏偏好已更新' : '等待首页空位';
-    favoriteSnapshot.textContent = workState.updatedAt ? `${workState.sourceCount ?? selectedCount} 个来源 · ${workState.tagCount ?? 0} 个兴趣标签 · 更新于 ${new Date(workState.updatedAt).toLocaleString()}` : '';
+    favoriteSnapshot.hidden = !workState.updatedAt;
+    if (workState.updatedAt) {
+      const updated = new Date(workState.updatedAt);
+      const date = localDateValue(updated);
+      const time = localTimeValue(updated);
+      favoriteCounts.textContent = `${workState.sourceCount ?? selectedCount} 个来源 · ${workState.tagCount ?? 0} 个标签`;
+      favoriteUpdated.textContent = `${date.slice(5)} ${time.slice(0, 5)} 更新`;
+      favoriteUpdated.dateTime = updated.toISOString();
+      favoriteUpdated.title = `更新于 ${date} ${time}`;
+      favoriteUpdated.setAttribute('aria-label', favoriteUpdated.title);
+    }
     favoriteContinue.disabled = disabled || !selectedCount || busy || continuePending || Boolean(reason && reason !== 'no-results');
-    favoriteContinue.hidden = !options.onFavoriteContinue;
+    favoriteContinueAction.hidden = !options.onFavoriteContinue;
     favoriteNext.hidden = reason !== 'paused' && reason !== 'no-cutoff';
     favoriteNext.textContent = reason === 'paused' ? '开启时间过滤' : '设置截止时间';
     if (disabled) favoriteFolderStatus.textContent = '开启收藏补位后可选择或刷新收藏夹';
@@ -396,16 +415,18 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     }
   };
   const renderFilterStatus = (): void => {
-    filterControl.textContent = current.enabled ? 'Ⅱ 暂停过滤' : '▶ 开启过滤';
+    filterControl.textContent = current.enabled ? '暂停过滤' : '开启过滤';
     filterControl.dataset.paused = String(!current.enabled);
     filterControl.setAttribute('aria-pressed', String(current.enabled));
-    filterState.textContent = !current.enabled ? '过滤已关闭' : current.cutoffMinute ? '过滤已开启' : '待设置时间';
+    filterState.textContent = !current.enabled ? '未开启' : current.cutoffMinute ? '过滤中' : '待设时间';
+    filterState.dataset.active = String(current.enabled && Boolean(current.cutoffMinute));
     status.textContent = current.enabled && current.cutoffMinute
       ? `${current.autoAdvance ? '自动推进中：' : '已启用：'}早于 ${current.cutoffMinute.replace('T', ' ')} 的内容`
       : current.enabled ? '请设置完整的截止日期和时间' : '过滤未启用';
     hint.textContent = current.enabled
       ? '仅保留严格早于截止时间的内容'
       : '关闭过滤后，请刷新页面以恢复完整内容';
+    hint.hidden = current.enabled;
   };
   const emit = (resetAutoAnchor = false): void => {
     let nextAutoAdvance = autoAdvance.checked;

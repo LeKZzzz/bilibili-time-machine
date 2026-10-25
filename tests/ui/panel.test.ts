@@ -27,8 +27,11 @@ describe('createFilterPanel', () => {
     root?.querySelector<HTMLButtonElement>('#filter-control')?.click();
     expect(enabled.checked).toBe(true);
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ enabled: true }));
+    expect(root?.querySelector<HTMLElement>('.panel-footer .hint')?.hidden).toBe(true);
     root?.querySelector<HTMLButtonElement>('#filter-control')?.click();
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false }));
+    expect(root?.querySelector<HTMLElement>('.panel-footer .hint')?.hidden).toBe(false);
+    expect(root?.querySelector('.panel-footer .hint')?.textContent).toContain('刷新页面');
     controller.destroy();
     expect(document.getElementById('bilibili-time-filter-panel')).toBeNull();
   });
@@ -244,7 +247,7 @@ describe('createFilterPanel', () => {
     expect(refresh.disabled).toBe(true);
     controller.updateFavoriteState({ phase: 'ready', sourceCount: 1, tagCount: 8, updatedAt: 1000 });
     expect(root?.querySelector('#favorite-work-status')?.textContent).toBe('收藏偏好已更新');
-    expect(root?.querySelector('#favorite-snapshot')?.textContent).toContain('8 个兴趣标签');
+    expect(root?.querySelector('#favorite-snapshot')?.textContent).toContain('8 个标签');
     expect(refresh.disabled).toBe(false);
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ favoriteRefreshRequestedAt: expect.any(Number) }));
     controller.destroy();
@@ -276,6 +279,36 @@ describe('createFilterPanel', () => {
     expect(list.textContent).toContain('音乐');
     root?.querySelector<HTMLButtonElement>('#favorite-tags-close')?.click();
     expect(dialog.hidden).toBe(true);
+    controller.destroy();
+  });
+
+  it('summarizes many sources and keeps full names and update time available', async () => {
+    const folders = Array.from({ length: 100 }, (_, index) => ({
+      id: String(index + 1), title: `很长的收藏夹名称：影视与科学探索系列 ${index + 1}`,
+    }));
+    const config = { cutoffMinute: '2026-10-25T11:23:51', enabled: true, supplementBudget: 20, debug: false,
+      favoriteHomeFillEnabled: true, favoriteFolderLimit: 10, favoriteFolderIds: folders.slice(0, 10).map(({ id }) => id) };
+    const controller = createFilterPanel({ document, config, onFavoriteFoldersRefresh: async () => folders });
+    const root = controller.element.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelectorAll('.folder-option')).toHaveLength(100));
+    const summary = root.querySelector<HTMLElement>('#favorite-selection-summary')!;
+    expect(summary.textContent).toBe('已选 10 个收藏夹');
+    expect(summary.title).toBe(folders.slice(0, 10).map(({ title }) => title).join('、'));
+
+    controller.update({ ...config, favoriteFolderIds: ['1'] });
+    expect(summary.textContent).toBe(folders[0].title);
+    expect(summary.title).toBe(folders[0].title);
+
+    const updatedAt = new Date(2026, 9, 25, 11, 24, 49).getTime();
+    controller.updateFavoriteState({ phase: 'ready', sourceCount: 10, tagCount: 100, updatedAt });
+    const updated = root.querySelector<HTMLTimeElement>('#favorite-updated')!;
+    expect(root.querySelector('#favorite-counts')!.textContent).toBe('10 个来源 · 100 个标签');
+    expect(updated.textContent).toBe('10-25 11:24 更新');
+    expect(updated.dateTime).toBe(new Date(updatedAt).toISOString());
+    expect(updated.title).toBe('更新于 2026-10-25 11:24:49');
+    expect(updated.getAttribute('aria-label')).toBe(updated.title);
+    controller.updateFavoriteState({ phase: 'idle' });
+    expect(root.querySelector<HTMLElement>('#favorite-snapshot')!.hidden).toBe(true);
     controller.destroy();
   });
 
@@ -380,6 +413,9 @@ describe('createFilterPanel', () => {
     });
     const root = controller.element.shadowRoot!;
     const next = root.querySelector<HTMLButtonElement>('#favorite-continue')!;
+    root.querySelector<HTMLButtonElement>('.toggle')!.click();
+    root.querySelector<HTMLButtonElement>('[data-help="favorite-continue"]')!.focus();
+    expect(root.querySelector('#setting-tooltip')!.textContent).toContain('只填空位，不会替换已显示的视频');
     controller.updateFavoriteState({ phase: 'empty', reason: 'no-tags' });
     expect(next.disabled).toBe(true);
     controller.updateFavoriteState({ phase: 'empty', reason: 'no-results' });

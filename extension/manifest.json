@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "B 站时光机",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "按本地截止时间过滤当前 B 站视频、评论和 XML 弹幕。",
   "permissions": ["storage"],
   "host_permissions": [
