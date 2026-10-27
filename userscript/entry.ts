@@ -10,6 +10,11 @@ import { resolveAutoAdvanceConfig } from '../src/core/auto-advance';
 import { configLog, devLog } from '../src/core/dev-log';
 import { createFavoriteHomeFillController, type FavoriteHomeFillController } from '../src/runtime/favorite-home-fill-controller';
 import { createFavoriteFolderLoader } from '../src/runtime/favorite-folder-list';
+import { createPlaybackBridgeClient, installPlaybackBridgeHost } from '../src/playback/bridge';
+import { isControlledPlaybackFrame, isPlaybackPage } from '../src/playback/runtime';
+import type { PlaybackPanelClient } from '../src/ui/playback-panel';
+
+let playback: PlaybackPanelClient | undefined;
 
 const STORAGE_KEY = 'bilibili-time-filter.config.v1';
 const BRIDGE_SOURCE = 'bilibili-time-filter';
@@ -87,7 +92,7 @@ function sendBridgeMessage(config: FilterPanelConfig): void {
 function start(documentRef: Document = document, deferScan = false): { destroy: () => void } {
   const target = pageWindow();
   const route = matchSupportedRoute(target.location);
-  if (!route.installHook) return { destroy: () => undefined };
+  if (!route.installHook && !isPlaybackPage(target.location)) return { destroy: () => undefined };
   // 配置未读取前严格隐藏首屏，避免默认 disabled 造成闪现。
   const pendingConfig: FilterPanelConfig = { ...DEFAULT_CONFIG, enabled: true, cutoffMinute: null };
   let current = pendingConfig;
@@ -137,15 +142,16 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     if (__TIME_FILTER_DEV__) devLog.log(configLog('config-loaded', current, 'userscript'));
     return current;
   });
-  const hook: NetworkHookHandle = installNetworkHook({
+  const hook: NetworkHookHandle | null = route.installHook ? installNetworkHook({
     target,
     getConfig: () => (configReady ? resolveAutoAdvanceConfig(current) : initialConfig),
     onNotice: (reason) => notices.show('过滤器无法验证当前内容，相关内容已隐藏。', reason),
     filterVideoResponse: repagination
       ? (url, payload, config) => repagination.transformVideo(url, payload, config)
       : undefined,
-  });
+  }) : null;
   panel = createFilterPanel({
+    playback,
     document: documentRef,
     config: current,
     onFavoriteFoldersRefresh: loadFolders,
@@ -190,7 +196,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   return {
     destroy: () => {
       mounted = false;
-      hook.uninstall();
+      hook?.uninstall();
       if (initialScanTimer !== undefined) target.clearTimeout(initialScanTimer);
       if (autoAdvanceTimer !== undefined) target.clearInterval(autoAdvanceTimer);
       nativeSearchFilter?.destroy();
@@ -205,9 +211,22 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
 }
 
 function mount(): void {
+  if (isControlledPlaybackFrame(pageWindow())) return;
   if (!document.documentElement) {
     document.addEventListener('DOMContentLoaded', mount, { once: true });
     return;
+  }
+  if (!playback) {
+    installPlaybackBridgeHost(pageWindow());
+    playback = createPlaybackBridgeClient(pageWindow(), {
+      async get(key) { return gmApi().getValue?.(key, undefined); },
+      async set(key, value) {
+        const set = gmApi().setValue;
+        if (!set) throw new Error('GM 存储不可用');
+        await set(key, value);
+      },
+      async remove(key) { await gmApi().deleteValue?.(key); },
+    });
   }
   let active = start(document);
   const routeKey = (): string => `${pageWindow().location.host}${pageWindow().location.pathname}`;

@@ -10,6 +10,9 @@ import { getSearchRepagination } from './search-repagination';
 import type { FilterConfig } from '../core/types';
 import { resolveAutoAdvanceConfig } from '../core/auto-advance';
 import { configLog, devLog } from '../core/dev-log';
+import { installPlaybackBridgeHost } from '../playback/bridge';
+
+installPlaybackBridgeHost(window);
 
 export const CONFIG_EVENT = 'bilibili-time-filter:config';
 

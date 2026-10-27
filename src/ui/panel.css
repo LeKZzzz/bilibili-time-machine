@@ -1,5 +1,6 @@
 @import "tailwindcss" source(none);
 @source "./panel.ts";
+@source "./playback-panel.ts";
 @plugin "daisyui" {
   themes: light --default;
   include: button, input, toggle, badge;
@@ -125,6 +126,31 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .tag-list li { padding: 6px 0; }
 .tag-list small { margin-left: 8px; color: var(--muted); font-size: 12px; }
 .tooltip { position: fixed; z-index: 3; max-width: min(280px, calc(100vw - 24px)); padding: 8px 10px; border-radius: 8px; background: #26292e; color: #fff; box-shadow: 0 3px 12px #0000002e; font-size: 12px; line-height: 1.6; pointer-events: none; }
+.playback-entry { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: linear-gradient(110deg, #f5f4eb, #f0f8f6); }
+.playback-entry > div { min-width: 0; }
+.playback-entry .ui-btn { flex-shrink: 0; }
+.playback-view .section { padding: 16px 0; }
+.playback-view .section .row { margin-top: 12px; }
+.playback-now { padding: 12px; border-radius: 8px; background: #eef6f3; overflow-wrap: anywhere; }
+#playback-status { display: block; margin-bottom: 8px; color: #316251; }
+#playback-message, #playback-feedback { font-size: 12px; overflow-wrap: anywhere; }
+#playback-interval { flex: 0 0 78px; width: 78px; }
+.playback-view select { display: block; width: 100%; min-height: 36px; margin-top: 8px; border: 1px solid var(--field-border); border-radius: 8px; padding: 4px; font: inherit; background: #fff; color: inherit; }
+.playback-view select:focus-visible, .playback-view a:focus-visible, .playback-list:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.playback-list { height: 280px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+.playback-ad-list { height: 220px; }
+.playback-work { padding: 0 0 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+.playback-list .row strong { min-width: 0; overflow-wrap: anywhere; }
+.playback-list .ui-btn { flex-shrink: 0; }
+.playback-list ol { list-style: decimal inside; padding: 0; margin: 8px 0; }
+.playback-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
+.playback-list a { min-width: 0; overflow-wrap: anywhere; color: var(--color-primary); text-decoration: underline; }
+.playback-entry-form { display: grid; gap: 6px; }
+.playback-entry-form input, .playback-add input { width: 100%; min-width: 0; }
+.playback-add { display: flex; gap: 8px; margin-top: 8px; }
+.playback-add .ui-btn { flex-shrink: 0; }
+.playback-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.playback-footer { max-height: 45dvh; overflow-y: auto; }
 @media (hover: hover) {
   .preset.ui-btn:hover, #favorite-refresh:hover:not(:disabled), #favorite-continue:hover:not(:disabled) { background: var(--color-base-200); color: var(--color-primary); }
   .help:hover, .text-button.ui-btn:hover { color: var(--color-primary); background: #eaf8fe; }

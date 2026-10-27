@@ -1,4 +1,4 @@
 node_modules/
 .playwright-mcp/
 *.log
-dist/
+dist/dev/

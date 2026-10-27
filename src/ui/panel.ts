@@ -5,6 +5,7 @@ import type { FavoriteTagScore } from '../core/favorite-home-fill';
 import { parseLocalMinute } from '../core/time';
 import type { FavoriteHomeFillState } from '../runtime/favorite-home-fill-controller';
 import panelStyle from './panel.css?inline';
+import { createPlaybackPanel, type PlaybackPanelClient } from './playback-panel';
 
 export type FilterPanelConfig = FilterConfig;
 
@@ -15,6 +16,7 @@ export interface FilterPanelOptions {
   onFavoriteFoldersRefresh?: (force?: boolean, isActive?: () => boolean) => Promise<FavoriteFolderOption[]>;
   onFavoriteContinue?: () => void | Promise<void>;
   onFavoriteTagsLoad?: () => Promise<FavoriteTagScore[]>;
+  playback?: PlaybackPanelClient;
 }
 
 export interface FilterPanelController {
@@ -266,6 +268,16 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     favoriteFolders.scrollTop = 0;
     firstFocus.focus();
   };
+  const playbackPanel = options.playback ? createPlaybackPanel(doc, options.playback, closeDialog) : null;
+  if (playbackPanel) {
+    card.append(playbackPanel.element);
+    const entry = doc.createElement('section');
+    entry.className = 'section playback-entry';
+    entry.innerHTML = '<div><strong>动画时光机</strong><div class="description">连续放映 · 公益广告 · 独立于时间过滤</div></div><button id="playback-open" class="ui-btn ui-btn-sm" type="button">打开频道</button>';
+    mainView.querySelector('.panel-body')!.prepend(entry);
+    const opener = entry.querySelector<HTMLButtonElement>('button')!;
+    opener.addEventListener('click', () => openDialog(playbackPanel.element, playbackPanel.back, opener));
+  }
   const validateDraft = (): boolean => {
     let message = '';
     if (!favoriteFolderLimit.validity.valid || !favoriteVideoLimit.validity.valid || !favoriteFolderLimit.value || !favoriteVideoLimit.value) {
@@ -632,7 +644,7 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     element: host,
     update: sync,
     updateFavoriteState: (state) => { workState = state; renderFavoriteControls(); },
-    destroy: () => { disposed = true; host.remove(); },
+    destroy: () => { disposed = true; playbackPanel?.destroy(); host.remove(); },
   };
 }
 

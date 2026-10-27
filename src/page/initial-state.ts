@@ -3,6 +3,7 @@ import { parseDisplayedCardDate } from './search-card-date';
 import type { VideoRecord } from '../core/types';
 import { parseValidatedUnixSeconds, getCutoffSeconds } from '../core/time';
 import { cardDecisionLog, devLog } from '../core/dev-log';
+import { isAnimationPlaybackDocument } from '../playback/filter-context';
 
 export interface InitialStateWindow {
   __INITIAL_STATE__?: unknown;
@@ -227,7 +228,7 @@ export function scanRenderedMainVideo(
     return String(item.aid ?? '').toLowerCase() === key.slice(2);
   });
   if (!record) return { checked: 0, hidden: 0, unknown: 0 };
-  const decision = classifyVideo(record, cutoff, options);
+  const decision = classifyVideo(record, cutoff, isAnimationPlaybackDocument(documentRef) ? { ...options, enabled: false } : options);
   if (__TIME_FILTER_DEV__) devLog.log(cardDecisionLog(record, decision, cutoff, 'main-video'));
   const elements = Array.from(root.querySelectorAll('#viewbox_report, .video-info-container, h1.video-title'));
   for (const element of elements) setVisible(element, decision.visible);

@@ -8,6 +8,12 @@ import { resolveAutoAdvanceConfig } from '../core/auto-advance';
 import { configLog, devLog } from '../core/dev-log';
 import { createFavoriteHomeFillController, type FavoriteHomeFillController } from './favorite-home-fill-controller';
 import { createFavoriteFolderLoader } from './favorite-folder-list';
+import { createPlaybackBridgeClient } from '../playback/bridge';
+import { createChromeStorage } from './config-store';
+import { isPlaybackPage } from '../playback/runtime';
+import type { PlaybackPanelClient } from '../ui/playback-panel';
+
+let playback: PlaybackPanelClient | undefined;
 
 const STORAGE_KEY = 'bilibili-time-filter.config.v1';
 const BRIDGE_SOURCE = 'bilibili-time-filter';
@@ -54,7 +60,7 @@ function send(config: FilterPanelConfig): void {
 }
 
 function start(documentRef: Document = document, deferScan = false): { destroy: () => void } {
-  if (!matchSupportedRoute(window.location).installHook) return { destroy: () => undefined };
+  if (!matchSupportedRoute(window.location).installHook && !isPlaybackPage(window.location)) return { destroy: () => undefined };
   const pendingConfig: FilterPanelConfig = { ...DEFAULT_CONFIG, enabled: true, cutoffMinute: null };
   let current = pendingConfig;
   let configReady = false;
@@ -96,6 +102,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   if (deferScan) initialScanTimer = window.setTimeout(scanInitial, 500);
   else scanInitial();
   panel = createFilterPanel({
+    playback,
     document: documentRef,
     config: current,
     onFavoriteFoldersRefresh: loadFolders,
@@ -158,6 +165,7 @@ function mount(): void {
     document.addEventListener('DOMContentLoaded', mount, { once: true });
     return;
   }
+  playback ??= createPlaybackBridgeClient(window, createChromeStorage(chrome.storage.local));
   let active = start(document);
   const routeKey = (): string => `${window.location.host}${window.location.pathname}`;
   let lastRoute = routeKey();

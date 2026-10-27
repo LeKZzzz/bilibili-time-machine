@@ -1,4 +1,5 @@
 import { classifyVideo } from '../core/video';
+import { isAnimationDetailRequest } from '../playback/filter-context';
 import type { FilterConfig, VideoRecord } from '../core/types';
 import { devLog } from '../core/dev-log';
 import { adaptCommentPayload, isCommentUrl } from './comment-adapter';
@@ -161,6 +162,7 @@ function processPayload(
     return result.payload;
   }
   if (isVideoResponseUrl(url)) {
+    if (isAnimationDetailRequest(url, options.target)) return payload;
     const delegated = options.filterVideoResponse?.(url, payload, config);
     if (delegated !== undefined) {
       if (__TIME_FILTER_DEV__) logNetwork(url, 'video', undefined, true);
