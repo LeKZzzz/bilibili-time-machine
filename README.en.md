@@ -23,7 +23,7 @@ Screenshots are from the `v0.2.1` source, with sample folders and tags rather th
 - **Fill homepage gaps from your favorites:** use tags from selected favorite folders to find videos before the cutoff, without rearranging existing visible cards.
 - **Let the clock advance:** optionally move the cutoff forward by elapsed whole minutes, continuing after a page refresh.
 - **Pause at any time:** adjust the cutoff, pause filtering, and manage favorite sources from an in-page panel.
-- **Animation playlists and public-service ads:** alternate between shows or play each show in order. Animation mode allows mid-roll ads; ordinary viewing offers optional ads at the end of a video. This feature is implemented in the current source but has not been released.
+- **Animation playlists and public-service ads:** alternate between shows or play each show in order. Animation mode allows mid-roll ads; ordinary viewing offers optional ads at the end of a video. Available from `v0.3.0`.
 
 Time filtering supports the homepage, video pages, categories, search, profile video lists, and the activity feed on `www.bilibili.com`, `search.bilibili.com`, `space.bilibili.com`, and `t.bilibili.com`. Independent playback also supports video and bangumi playback pages on `www.bilibili.com`; this does not imply full time-filtering support for bangumi pages. Other unrecognized routes retain only the settings entry point.
 
@@ -55,7 +55,7 @@ Chrome cannot load the ZIP directly. GitHub's automatically generated **Source c
 
 Releases also provide `bilibili-time-machine.user.js` and `bilibili-time-machine-userscript-vX.Y.Z.zip`. Both contain the same production userscript. Extract the ZIP first, then import the script into Tampermonkey, or replace the default template in its script editor and save.
 
-Assets may still be building immediately after a release is published. If they are missing, check the corresponding Actions run.
+Automatic releases build and upload assets before publishing. If a new version is missing, check the corresponding Actions run.
 
 To try a branch build, sign in to GitHub, open a successful **Build** run for that branch in [Actions](https://github.com/LeKZzzz/bilibili-time-machine/actions), and download an **Artifact**:
 
@@ -103,7 +103,7 @@ Candidates are randomly selected using tag preferences and deduplicated, with at
 
 “同步收藏夹名称” (Sync folder names) refreshes the list after folders are created, deleted, or renamed; it does not update video tags. Preferences for selected sources can still be updated while filtering is paused or away from the homepage. Disabling filling stops its tasks but keeps cached data and selections. Closing the panel alone does not cancel submitted tasks.
 
-### Animation playlists and public-service ads (unreleased)
+### Animation playlists and public-service ads
 
 Open the animation entry in the Time Machine panel to enter “童年放映室” (Childhood Screening Room). No cutoff or enabled time filter is required, and playback settings do not change filtering settings. The current animation entry is exempt from publication-time filtering; recommendations and comments retain the existing filtering rules.
 
@@ -206,10 +206,10 @@ The project uses TypeScript, Vite, Vitest, and jsdom. The native TypeScript sett
 To publish a release:
 
 1. Finish verification. Set the version to `X.Y.Z` in `package.json`, the root package versions in `package-lock.json`, `extension/manifest.json`, and the userscript metadata in `vite.config.ts`.
-2. Create a `vX.Y.Z` tag on the commit to release and **publish a GitHub Release**. Pushing a tag or saving a draft alone does not trigger asset builds.
-3. Wait for `.github/workflows/release.yml` to build the tag, check version consistency, and upload the three production assets: the extension ZIP, userscript ZIP, and standalone `.user.js`. Check the Actions result, download the assets, and verify installation.
+2. Push the public changes to `main`. `.github/workflows/release.yml` reads the package version and skips an already published `vX.Y.Z`. Otherwise it builds, checks version consistency, creates the tag and a draft Release, uploads all three production assets, and publishes the Release. Enabling this workflow also publishes the current version if it is still unpublished; another version bump is not required.
+3. Check the Actions result, download the extension ZIP, userscript ZIP, and standalone `.user.js`, and verify installation. Retry a failed run or manually dispatch the Release workflow on `main`. There is no need to create a tag or Release manually; a tag-only push does not trigger publication.
 
-The Release workflow uses the built-in `GITHUB_TOKEN`, not a PAT. It does not upload development builds, publish to extension stores, create signed CRX files, or update Greasy Fork. A partial upload failure may leave some assets in place; rerunning uses `gh release upload --clobber` to complete or overwrite same-named assets without rewriting the tag.
+The Release workflow uses the built-in `GITHUB_TOKEN`, not a PAT. It does not upload development builds, publish to extension stores, create signed CRX files, or update Greasy Fork. Runs are serialized to avoid duplicate releases. An upload failure leaves a draft; a retry builds the existing tag and uses `gh release upload --clobber` to complete the assets before publishing. Existing tags and published releases are not overwritten.
 
 </details>
 

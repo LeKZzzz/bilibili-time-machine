@@ -23,7 +23,7 @@
 - **收藏偏好补充首页**：从选定收藏夹提取兴趣标签，寻找符合截止时间的视频，填补被隐藏的首页卡片，不打乱已有可见内容。
 - **让时间继续走**：截止时间可按真实经过的完整分钟自动推进，刷新页面后继续。
 - **随时暂停**：通过页面内的设置面板调整时间、暂停过滤或管理收藏来源。
-- **动画时光机与公益广告**：独立片单按作品轮播或顺播；动画可中途插播公益短片，普通观看可选择仅在片尾插播。此项为当前源码中的未发布功能。
+- **动画时光机与公益广告**：独立片单按作品轮播或顺播；动画可中途插播公益短片，普通观看可选择仅在片尾插播。自 `v0.3.0` 起提供。
 
 时间过滤支持首页、视频详情、分区、搜索、空间视频列表及动态页面。页面范围限于 `www.bilibili.com`、`search.bilibili.com`、`space.bilibili.com` 和 `t.bilibili.com`；独立播放另接入 `www.bilibili.com` 的视频与番剧播放页，不代表完整支持番剧页面过滤。其他未知路由只保留设置入口。
 
@@ -55,7 +55,7 @@ Chrome 不能直接加载 ZIP；Release 中自动生成的 **Source code** 压�
 
 Release 还提供 `bilibili-time-machine.user.js` 和 `bilibili-time-machine-userscript-vX.Y.Z.zip`。两者包含相同的生产脚本，ZIP 需先解压，再导入 Tampermonkey；也可在脚本编辑器中替换默认模板并保存。
 
-若 Release 刚发布，附件可能仍在构建；缺少附件时请检查对应的 Actions 运行结果。
+自动发布会先构建并上传附件，再公开 Release；未看到新版本时请检查对应的 Actions 运行结果。
 
 想试用某个分支的构建，可登录 GitHub，在 [Actions](https://github.com/LeKZzzz/bilibili-time-machine/actions) 中打开该分支成功的 **Build** 运行，下载 **Artifacts**：
 
@@ -103,7 +103,7 @@ Release 还提供 `bilibili-time-machine.user.js` 和 `bilibili-time-machine-use
 
 “同步收藏夹名称”只刷新新建、删除或重命名后的收藏夹列表，不更新视频标签。暂停过滤或处于非首页时，仍可单独更新已选来源的收藏偏好。关闭补位会停止任务并保留缓存与选择；仅收起面板不会取消已经提交的任务。
 
-### 动画时光机与公益广告（未发布）
+### 动画时光机与公益广告
 
 打开“时光机”中的动画播放入口，进入“童年放映室”。不需要开启时间过滤或设置截止时间，播放设置也不会改变过滤配置。动画当前主条目不按上传时间过滤，推荐和评论仍沿用原过滤设置。
 
@@ -206,10 +206,10 @@ npm run build:dev
 正式发布步骤：
 
 1. 完成验证，将 `package.json`、`package-lock.json` 的根包版本、`extension/manifest.json` 和 `vite.config.ts` 中的油猴版本统一为 `X.Y.Z`。
-2. 在待发布的提交上创建 `vX.Y.Z` 标签并**发布 GitHub Release**。仅推送标签或保存草稿不会触发附件构建。
-3. 等待 `.github/workflows/release.yml` 构建对应 tag、检查版本一致性并上传三份生产附件：扩展 ZIP、用户脚本 ZIP、独立 `.user.js`。检查 Actions 结果，下载附件并验证安装。
+2. 将公开改动推送到 `main`。`.github/workflows/release.yml` 自动读取包版本：对应 `vX.Y.Z` 已发布则跳过，否则构建、检查版本一致性、创建标签与 Release 草稿，上传三份生产附件后自动公开。首次启用也会发布当前尚未发布的版本，无需再改一次版本号。
+3. 检查 Actions 结果，下载扩展 ZIP、用户脚本 ZIP、独立 `.user.js` 并验证安装。失败后可重跑，或在 Actions 中选择 `main` 手动运行 Release 工作流；无需手动创建标签或 Release，仅推送标签不触发发布。
 
-Release 工作流使用内置 `GITHUB_TOKEN`，无需 PAT，不上传开发构建，不发布商店或签名 CRX，也不会同步 Greasy Fork。上传中途失败可能留下部分附件；重跑通过 `gh release upload --clobber` 补齐或覆盖同名附件，不改写标签。
+Release 工作流使用内置 `GITHUB_TOKEN`，无需 PAT，不上传开发构建，不发布商店或签名 CRX，也不会同步 Greasy Fork。同版本串行检查，不重复发布。上传失败会保留草稿；重跑复用已有标签的源码，通过 `gh release upload --clobber` 补齐附件后公开，不改写标签，也不覆盖已公开版本。
 
 </details>
 
