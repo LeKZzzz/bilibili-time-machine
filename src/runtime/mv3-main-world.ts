@@ -1,6 +1,6 @@
 /**
- * MV3 MAIN world 入口只负责页面上下文桥接。
- * 网络 Hook 可以监听下列两个 CustomEvent，不依赖 chrome.* API。
+ * MV3 页面入口负责网络过滤、搜索补齐及独立播放控制。
+ * 通过消息桥连接 ISOLATED 侧的界面、存储和片源解析，不直接调用 chrome.*。
  */
 
 import { installNetworkHook } from '../page/network-hook';

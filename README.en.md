@@ -58,11 +58,17 @@ To update, load the new directory, confirm the extension version, and refresh Bi
 
 ## Watch animation: Childhood Screening Room
 
+> Development status (2026-11-01): the 31-show catalog, link import and automatic expansion, separate dialogs, 60-second resumable ad segments, live order changes, current-page-first resume, and automatic follow-through after manual episode selection are unreleased `dev` changes. Published `v0.3.0` assets do not include them. The local package version is still `0.3.0`, so the version number alone does not show whether these changes are installed.
+
 Open **“时光机” (Time Machine) → “动画时光机” (Animation Time Machine) → “打开频道” (Open channel)**. The interface is in Chinese; the instructions below include the actual control labels.
 
-1. Try the built-in sample playlist, or click “添加作品” (Add show), enter a Bilibili link for an animation you want to watch, and click “添加条目” (Add entry). BV videos, specific parts, and bangumi `ep` links are supported. Each link is one entry; entire seasons are not imported automatically.
+1. Try the built-in playlist, or click “添加作品” (Add show) and paste a Bilibili video or bangumi `ep` / `ss` link in the dialog. Preview its parts, video collection, or regular season episodes, select entries, and add them to your draft playlist; manually adding a specific link is also supported. The main panel only shows each show's name and episode count. Click a show to open a separate episode-details dialog, where you can view, add, or remove entries.
 2. Choose “轮播 · 每部各播一集” (Round-robin: one episode per show) or “顺播 · 看完一部再下一部” (Sequential: finish one show first). Click “保存设置” (Save settings), then “从头播放” (Start from the beginning).
 3. Click “暂停” (Pause) for a break, or “退出连播” (Exit continuous playback) to end the session and retain progress. Next time, open the channel and click “继续观看” (Resume).
+
+Resume prioritizes the current page: if the animation or episode you opened manually is in the playlist, playback continues from that episode and its current viewing position, then follows the playlist order. A page outside the playlist restores saved progress instead. A saved episode that has not started playing keeps its saved position; a newly selected episode that has not loaded starts at zero. “从头播放” (Play from beginning) always starts the first playlist entry at zero.
+
+The default playlist contains **31 animated shows**, including Chinese classics, adventure series, and international favorites such as Digimon, The Smurfs, and The Little Mole. Opening the channel automatically expands untouched built-in shows from 74 seed entries using the same resolver and saves the results. Episode counts depend on the source and do not guarantee complete series. You can cancel expansion; failures retain existing entries. Edited or deleted shows are not restored, and updated defaults do not replace your saved playlist. A long video without parts or a collection remains one entry; it is not split automatically.
 
 For a show A with two episodes and a show B with three:
 
@@ -71,13 +77,15 @@ For a show A with two episodes and a show B with three:
 | Round-robin | A1 → B1 → A2 → B2 → B3 → A1 in the next round |
 | Sequential | A1 → A2 → B1 → B2 → B3 → A1 in the next round |
 
-The playlist loops after every entry has played. Each show needs at least one entry. Exit continuous playback before editing the playlist or order, and save your changes. Reloading, reopening the browser, or opening a new tab does not start animation automatically; choose Resume yourself. Navigating away from the current entry also ends the session.
+The playlist loops after every entry has played. Each show needs at least one entry. **You can switch between round-robin and sequential order during playback and save.** The current episode continues without resetting its position or the ad timer; playback then follows the entry after it in the new order. Saving an order change while paused or during an ad does not resume playback or skip the ad. Exit continuous playback before adding or removing shows or episodes, and save your changes. Reloading, reopening the browser, or opening a new tab does not start animation automatically; choose Resume yourself. **During continuous playback, manually selecting another playlist entry automatically continues the session from that entry**, including same-page episode changes and full-page navigation in the current window. You do not need to click Resume again. Selecting a video outside the playlist ends the session without pulling you back; explicitly exiting does not restart it automatically.
 
 > Mid-episode animation ads are on by default, with a 20-minute interval. For uninterrupted animation, turn off “动画中途插播” (Animation mid-roll ads) and save settings.
 
 ## Configure public-service ads
 
-Manage ad links, switches, and the interval in “童年放映室” (Childhood Screening Room). Two sample clips are included: “妈妈，洗脚” and “关爱老人，用心开始”. You can add or remove entries.
+Manage ad links, switches, and the interval in “童年放映室” (Childhood Screening Room). The default list includes **22 public-service ads**: CCTV and other Chinese classics, plus clips from Thailand, the UK, Brazil, Australia, South Korea, and WWF. Topics include family care, honesty, courtesy, the environment, road and water safety, smoking prevention, and bullying prevention. You can add or remove entries.
+
+Shows, episodes, and ads share an add dialog instead of inline forms. Adding an ad keeps only the specified link; it does not expand its collection. Confirmed additions and removals remain draft changes until you click “保存设置” (Save settings) in the main panel. Canceling an unconfirmed addition leaves the playlist unchanged.
 
 | Setting | Default | When an ad plays | After it ends or is skipped |
 | --- | --- | --- | --- |
@@ -85,6 +93,8 @@ Manage ad links, switches, and the interval in “童年放映室” (Childhood 
 | “普通观看片尾插播” (Ordinary-viewing end-of-video ads) | Off | Waits until the current video ends after the interval is reached | Returns control to Bilibili's native autoplay; a pause-at-end setting stays paused |
 
 Ads appear over the current player with the surroundings dimmed. **“跳过广告” (Skip ad) works during both loading and playback.** If an ad fails to load, its overlay is removed without immediately inserting another.
+
+**Each ad break plays at most 60 seconds**, excluding pauses, buffering, and seeking. An unfinished ad returns you to the main video and resumes from the same position at the next eligible ad break; rotation continues only after it finishes. Skipping or exiting also preserves the captured ad position. Reloading does not immediately reopen the ad.
 
 Both modes share the ad list and interval but track viewing time separately. The default is **20 minutes of actual playback**. Pauses, buffering, seeks, and the ads themselves do not count; faster playback does not accelerate the timer. Ordinary viewing never interrupts a video mid-play and does not accumulate a backlog of ads.
 
@@ -117,6 +127,7 @@ The default is **up to 3 folders, reading 50 videos per folder**, adjustable in 
 | --- | --- |
 | No entry point, or the old interface remains after an update | Check the installed version, enabled state, and supported page. Refresh Bilibili after reloading the extension. Do not enable the userscript and extension together |
 | Animation does not start automatically | Follow the panel prompt and click “点击继续播放” (Click to continue playing); the browser may block autoplay. After a reload or reopening, use “继续观看” (Resume) |
+| A built-in show reports a parsing failure | Existing entries remain usable. The failure is saved, so opening the channel does not repeatedly retry. Open the show's details, add episodes, parse the link again, select the entries you need, and save |
 | A bangumi entry is skipped | Explicit preview-only, inaccessible, or unavailable entries are skipped. Playback stops if the entire playlist is unavailable. Member-only content still requires the appropriate account access |
 | Homepage gaps remain | Enable filtering and filling on the homepage and select favorite folders. A gap remains when no candidate meets the cutoff and deduplication rules |
 | Content is hidden because its time cannot be verified | Try adjusting the extra-request budget in advanced settings. Content with an unknown timestamp is not allowed through |

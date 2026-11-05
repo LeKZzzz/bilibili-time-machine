@@ -1,7 +1,7 @@
 import { normalizePlaybackUrl } from './model';
 
 export type PlaybackPlayerEvent = {
-  type: 'media' | 'positioning' | 'positioned' | 'playing' | 'pause' | 'waiting' | 'seeking' | 'seeked' | 'ended' | 'unavailable' | 'blocked';
+  type: 'media' | 'loadstart' | 'loadedmetadata' | 'positioning' | 'positioned' | 'playing' | 'pause' | 'waiting' | 'seeking' | 'seeked' | 'ended' | 'unavailable' | 'blocked';
   reason?: string;
 };
 
@@ -184,8 +184,14 @@ export function createPlaybackPlayer(options: {
       if (event.target !== findPlaybackMedia(document)) return;
       refresh();
     }
-    if (event.type === 'loadedmetadata') { if (pendingSeek?.media !== media) applySeek(); return; }
-    if (event.type === 'loadstart') { if (media) failedMedia.delete(media); return; }
+    if (event.type === 'loadedmetadata') {
+      if (pendingSeek?.media !== media) applySeek();
+      options.onEvent({ type: 'loadedmetadata' }); return;
+    }
+    if (event.type === 'loadstart') {
+      if (media) failedMedia.delete(media);
+      options.onEvent({ type: 'loadstart' }); return;
+    }
     if (pendingSeek && ['seeking', 'seeked', 'canplay', 'playing', 'timeupdate', 'ended'].includes(event.type)) {
       if (!checkPosition()) {
         if (event.type === 'ended') event.stopImmediatePropagation();

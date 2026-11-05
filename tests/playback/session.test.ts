@@ -18,6 +18,15 @@ function fixture(saved?: PlaybackData) {
 async function settle() { await Promise.resolve(); await Promise.resolve(); }
 
 describe('播放会话', () => {
+  it('重复链接优先保留当前存档条目，接入时不重置轮次和动画插播计时', async () => {
+    const { session, data, ports } = fixture();
+    session.configure(data.config, { ...data.progress, cursor: 1, position: 80, round: 2, animationElapsedMs: 5000 });
+    await session.resume({ url: 'https://www.bilibili.com/video/BV1Ex411q7SJ/?p=1&vd_source=test', position: 32 });
+    expect(session.getState()).toMatchObject({ current: { id: 'B1' }, next: { id: 'A2' } });
+    expect(session.getData().progress).toMatchObject({ cursor: 1, position: 32, round: 2, animationElapsedMs: 5000 });
+    expect(ports.navigate).toHaveBeenCalledWith(expect.objectContaining({ id: 'B1' }), 32);
+  });
+
   it('普通广告切换到动画续播时先清理广告并清零原模式计时，不放行原生下一条', async () => {
     const { session, ports, data, advanceTime } = fixture();
     session.configure({ ...data.config, normalAds: true });
@@ -68,6 +77,41 @@ describe('播放会话', () => {
     expect(session.getState().elapsedMs).toBe(0);
   });
 
+  it.each([
+    ['round-robin', 'sequential', 1, 'B2'],
+    ['sequential', 'round-robin', 2, 'A2'],
+  ] as const)('播放中从 %s 改为 %s 保留当前集，下一集按新顺序接续', async (before, after, steps, next) => {
+    const { session, ports, data, advanceTime } = fixture();
+    session.configure({ ...data.config, order: before });
+    await session.start();
+    for (let index = 0; index < steps; index++) { session.mediaEnded(); await settle(); }
+    session.mediaPlaying(); session.mediaPosition(85.25); advanceTime(12_000);
+    expect(session.getState().current?.id).toBe('B1');
+    vi.mocked(ports.navigate).mockClear(); vi.mocked(ports.play).mockClear(); vi.mocked(ports.pause).mockClear();
+    session.configure({ ...session.getData().config, order: after });
+    expect(session.getState()).toMatchObject({ mode: 'animation', status: 'playing', current: { id: 'B1' }, next: { id: next }, elapsedMs: 12_000 });
+    expect(session.getData().progress.position).toBe(85.25);
+    expect(ports.navigate).not.toHaveBeenCalled(); expect(ports.play).not.toHaveBeenCalled(); expect(ports.pause).not.toHaveBeenCalled();
+    advanceTime(3_000); expect(session.getState().elapsedMs).toBe(15_000);
+    session.mediaEnded(); await settle();
+    expect(ports.navigate).toHaveBeenLastCalledWith(expect.objectContaining({ id: next }), 0);
+  });
+
+  it.each(['paused', 'blocked', 'waiting', 'ad'] as const)('%s 时切换顺序不会自动恢复、清除提示或打断广告', async status => {
+    const { session, ports, advanceTime } = fixture();
+    await session.start(); session.mediaPlaying(); session.mediaPosition(42);
+    if (status === 'paused') session.pause();
+    else if (status === 'blocked') session.autoplayBlocked();
+    else if (status === 'waiting') session.mediaWaiting();
+    else { advanceTime(60_000); session.adPosition(18); }
+    const before = session.getState(); const progress = session.getData().progress;
+    vi.mocked(ports.play).mockClear(); vi.mocked(ports.pause).mockClear();
+    session.configure({ ...session.getData().config, order: 'sequential' });
+    expect(session.getState()).toMatchObject({ mode: 'animation', status, message: before.message, ad: before.ad });
+    expect(session.getData().progress).toEqual(progress);
+    expect(ports.play).not.toHaveBeenCalled(); expect(ports.pause).not.toHaveBeenCalled(); expect(ports.closeAd).not.toHaveBeenCalled();
+  });
+
   it('普通观看只在片尾插一条且与动画独立计时', async () => {
     const { session, ports, data, advanceTime } = fixture();
     session.configure({ ...data.config, normalAds: true });
@@ -82,7 +126,7 @@ describe('播放会话', () => {
     session.exit(); expect(session.getState().elapsedMs).toBe(25_000);
   });
 
-  it('广告遍历和跳过不跨轮连续重复', async () => {
+  it('完整播完的广告遍历后不跨轮连续重复', async () => {
     const { session, ports, data, advanceTime } = fixture();
     session.configure({ ...data.config, ads: ['x', 'y', 'z'].map(id => ({ id, title: id, url: 'https://www.bilibili.com/video/BV13r4y117HE/' })) });
     await session.start();
@@ -90,6 +134,61 @@ describe('播放会话', () => {
     const ids = vi.mocked(ports.showAd).mock.calls.map(([ad]) => ad.id);
     for (let n = 0; n < 9; n += 3) expect(new Set(ids.slice(n, n + 3)).size).toBe(3);
     for (let n = 1; n < 9; n++) expect(ids[n]).not.toBe(ids[n - 1]);
+  });
+
+  it('长广告跨次续播同一条，完整播完后才轮换', async () => {
+    const { session, ports, advanceTime } = fixture();
+    await session.start(); session.mediaPlaying(); advanceTime(60_000);
+    const ad = session.getState().ad!;
+    session.adPosition(60); session.finishAd('segment');
+    expect(ports.play).toHaveBeenCalledWith(0);
+    session.mediaPlaying(); advanceTime(60_000);
+    expect(ports.showAd).toHaveBeenLastCalledWith(ad, 60);
+    session.adPosition(120); session.finishAd('segment');
+    session.mediaPlaying(); advanceTime(60_000);
+    expect(ports.showAd).toHaveBeenLastCalledWith(ad, 120);
+    session.finishAd('ended');
+    expect(session.getData().progress.adResume).toBeUndefined();
+    session.mediaPlaying(); advanceTime(60_000);
+    expect(session.getState().ad?.id).not.toBe(ad.id);
+  });
+
+  it.each(['skipped', 'segment'] as const)('%s 后刷新不立即插播，下次插播保留同一广告断点', async reason => {
+    const first = fixture();
+    await first.session.start(); first.session.mediaPlaying(); first.advanceTime(60_000);
+    const ad = first.session.getState().ad!;
+    first.session.adPosition(24.5); first.session.finishAd(reason);
+    const restored = fixture(first.session.getData());
+    expect(restored.ports.showAd).not.toHaveBeenCalled();
+    await restored.session.resume(); restored.session.mediaPlaying(); restored.advanceTime(60_000);
+    expect(restored.ports.showAd).toHaveBeenCalledWith(ad, 24.5);
+  });
+
+  it('广告退出时采集最后位置，片源失败后清除续播避免反复抽中失效片源', async () => {
+    const { session, ports, advanceTime } = fixture();
+    await session.start(); session.mediaPlaying(); advanceTime(60_000);
+    const ad = session.getState().ad!;
+    vi.mocked(ports.closeAd).mockImplementation(() => session.adPosition(32.75));
+    session.exit();
+    expect(session.getData().progress.adResume).toMatchObject({ id: ad.id, position: 32.75 });
+    await session.resume(); session.mediaPlaying(); advanceTime(60_000);
+    expect(ports.showAd).toHaveBeenLastCalledWith(ad, 32.75);
+    session.finishAd('error');
+    expect(session.getData().progress.adResume).toBeUndefined();
+  });
+
+  it('替换广告链接后不把旧视频断点用于新片源', async () => {
+    const { session, ports, advanceTime } = fixture();
+    await session.start(); session.mediaPlaying(); advanceTime(60_000);
+    const ad = session.getState().ad!;
+    session.adPosition(35); session.finishAd('segment');
+    const config = session.getData().config;
+    const replacementUrl = config.ads.find(entry => entry.url !== ad.url)!.url;
+    config.ads = [{ ...ad, url: replacementUrl }];
+    session.configure(config);
+    expect(session.getData().progress.adResume).toBeUndefined();
+    session.mediaPlaying(); advanceTime(60_000);
+    expect(ports.showAd).toHaveBeenLastCalledWith(config.ads[0], 0);
   });
 
   it('保存续播位置但新会话不自动启动；主动离开只清理不恢复', async () => {

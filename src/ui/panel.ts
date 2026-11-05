@@ -276,7 +276,10 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     entry.innerHTML = '<div><strong>动画时光机</strong><div class="description">连续放映 · 公益广告 · 独立于时间过滤</div></div><button id="playback-open" class="ui-btn ui-btn-sm" type="button">打开频道</button>';
     mainView.querySelector('.panel-body')!.prepend(entry);
     const opener = entry.querySelector<HTMLButtonElement>('button')!;
-    opener.addEventListener('click', () => openDialog(playbackPanel.element, playbackPanel.back, opener));
+    opener.addEventListener('click', () => {
+      openDialog(playbackPanel.element, playbackPanel.back, opener);
+      playbackPanel.open();
+    });
   }
   const validateDraft = (): boolean => {
     let message = '';

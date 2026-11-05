@@ -1,4 +1,4 @@
-import { normalizePlaybackData, playbackQueue, type PlaybackConfig, type PlaybackData, type PlaybackEntry } from './model';
+import { normalizePlaybackData, normalizePlaybackUrl, playbackQueue, type PlaybackConfig, type PlaybackData, type PlaybackEntry, type PlaybackProgress } from './model';
 
 export interface PlaybackState {
   config: PlaybackConfig;
@@ -10,12 +10,14 @@ export interface PlaybackState {
   elapsedMs: number;
   message: string;
   canResume: boolean;
+  catalogResolving?: boolean;
+  catalogMessage?: string;
 }
 export interface PlaybackPorts {
   navigate(entry: PlaybackEntry, position: number): Promise<void>;
   play(position?: number): void;
   pause(): void;
-  showAd(entry: PlaybackEntry): void;
+  showAd(entry: PlaybackEntry, position: number): void;
   closeAd(): void;
   releaseEnded(): void;
   save(data: PlaybackData): void | Promise<void>;
@@ -40,7 +42,7 @@ export class PlaybackSession {
   constructor(data: PlaybackData, private readonly ports: PlaybackPorts,
     options: { now?: () => number; random?: () => number } = {}) {
     this.data = normalizePlaybackData(data);
-    // 关闭页面时尚未结束的广告按跳过处理，不在新页面恢复广告。
+    // 新页面不立即恢复广告；保留断点，等下一次达到插播间隔再续播。
     if (this.data.progress.pendingAdMode === 'animation') this.data.progress.animationElapsedMs = 0;
     if (this.data.progress.pendingAdMode === 'normal') this.data.progress.normalElapsedMs = 0;
     delete this.data.progress.pendingAdMode;
@@ -64,27 +66,35 @@ export class PlaybackSession {
     };
   }
 
-  configure(config: PlaybackConfig): void {
+  configure(config: PlaybackConfig, savedProgress?: PlaybackProgress): void {
     config = normalizePlaybackData({ config }).config;
     const wasPlaying = this.playingSince !== null;
     this.accumulate();
-    const queueChanged = config.order !== this.data.config.order
-      || JSON.stringify(config.works) !== JSON.stringify(this.data.config.works);
+    const worksChanged = JSON.stringify(config.works) !== JSON.stringify(this.data.config.works);
+    const orderChanged = config.order !== this.data.config.order;
     const adsChanged = JSON.stringify(config.ads) !== JSON.stringify(this.data.config.ads);
-    if (queueChanged) {
+    const adSettingsChanged = adsChanged || config.animationAds !== this.data.config.animationAds
+      || config.normalAds !== this.data.config.normalAds || config.intervalMinutes !== this.data.config.intervalMinutes;
+    if (worksChanged || (orderChanged && this.status === 'stopped')) {
       delete this.data.progress.stopReason; this.message = '';
       if (this.status === 'stopped') this.status = 'idle';
     }
+    // 切换顺序只重排队列，保留当前条目和播放位置，下一集按新顺序接续。
     const current = playbackQueue(this.data.config)[this.data.progress.cursor];
     this.data.config = structuredClone(config);
     const index = playbackQueue(config).findIndex(entry => entry.id === current?.id);
     this.data.progress.cursor = Math.max(0, index);
     if (index < 0) this.data.progress.position = 0;
-    if (adsChanged) { this.adBag = []; this.data.progress.adBagIds = []; }
-    // 修改片单时结束本次连播，避免正在播的条目被悄悄替换。
-    if (this.mode === 'animation' && queueChanged) this.exit();
+    if (savedProgress) this.data.progress = { ...structuredClone(savedProgress), normalElapsedMs: this.data.progress.normalElapsedMs };
+    if (adsChanged) {
+      this.adBag = []; this.data.progress.adBagIds = [];
+      const resume = this.data.progress.adResume;
+      if (!config.ads.some(ad => ad.id === resume?.id && ad.url === resume.url)) delete this.data.progress.adResume;
+    }
+    // 修改动画作品或集数时结束连播；仅换顺序不结束当前播放。
+    if (this.mode === 'animation' && worksChanged) this.exit();
     else {
-      if (this.ad) this.finishAd();
+      if (this.ad && (worksChanged || adSettingsChanged)) this.finishAd('skipped');
       if (wasPlaying) this.playingSince = this.now();
       this.persist(); this.emit();
     }
@@ -107,14 +117,41 @@ export class PlaybackSession {
     await this.resume();
   }
 
-  async resume(): Promise<void> {
+  async resume(currentPage?: { url: string; position?: number }): Promise<void> {
     this.accumulate();
     this.cleanupAd();
+    if (currentPage) this.selectPage(currentPage);
     this.mode = 'animation';
     this.message = '';
     delete this.data.progress.stopReason;
     this.data.progress.failedEntryIds = [];
     await this.navigateCurrent();
+  }
+
+  followPage(url: string): boolean {
+    if (!this.selectPage({ url, position: 0 })) return false;
+    // 手动选集取消旧集尚未完成的导航，等待新媒体后再接入。
+    this.generation++; this.transitioning = false; this.pendingNavigation = false;
+    this.accumulate(); this.cleanupAd();
+    this.mode = 'animation'; this.status = 'loading'; this.message = '';
+    delete this.data.progress.stopReason;
+    this.data.progress.failedEntryIds = [];
+    this.persist(); this.emit();
+    return true;
+  }
+
+  private selectPage(currentPage: { url: string; position?: number }): boolean {
+    const url = normalizePlaybackUrl(currentPage.url);
+    const queue = playbackQueue(this.data.config);
+    const savedIndex = this.data.progress.cursor;
+    const index = url && queue[savedIndex]?.url === url ? savedIndex : queue.findIndex(entry => entry.url === url);
+    if (index < 0) return false;
+    // 手动选中的片单条目优先；未加载的新一集不能沿用上一集的秒数。
+    this.data.progress.cursor = index;
+    if (currentPage.position !== undefined && Number.isFinite(currentPage.position) && currentPage.position >= 0) {
+      this.data.progress.position = currentPage.position;
+    } else if (index !== savedIndex) this.data.progress.position = 0;
+    return true;
   }
 
   async resumeNavigation(failureReason?: string): Promise<void> {
@@ -163,6 +200,12 @@ export class PlaybackSession {
     if (!this.ad) return;
     this.status = 'ad'; this.message = ''; this.emit();
   }
+  adPosition(position: number): void {
+    const ad = this.ad;
+    if (!ad || !Number.isFinite(position) || position < 0) return;
+    if (!this.data.config.ads.some(entry => entry.id === ad.id && entry.url === ad.url)) return;
+    this.data.progress.adResume = { id: ad.id, url: ad.url, position };
+  }
   autoplayBlocked(): void {
     this.accumulate(); this.status = 'blocked'; this.message = '点击继续播放'; this.emit();
   }
@@ -190,7 +233,7 @@ export class PlaybackSession {
   }
 
   mediaFailed(reason: string): void {
-    if (this.ad) { this.finishAd(); return; }
+    if (this.ad) { this.finishAd('error'); return; }
     if (this.mode !== 'animation' || this.transitioning) return;
     this.accumulate();
     const current = this.getState().current;
@@ -203,9 +246,11 @@ export class PlaybackSession {
     } else void this.advance();
   }
 
-  finishAd(): void {
+  finishAd(reason: 'ended' | 'skipped' | 'error' | 'segment' = 'ended'): void {
     if (!this.ad) return;
     this.cleanupAd();
+    // 分段到点或跳过时保留已采集的广告断点，下次到点优先续播同一条。
+    if (reason === 'ended' || reason === 'error') delete this.data.progress.adResume;
     this.status = 'loading';
     this.persist(); this.emit();
     if (this.mode === 'animation') this.ports.play(this.data.progress.position);
@@ -229,7 +274,9 @@ export class PlaybackSession {
   private beginAd(): void {
     if (!this.data.config.ads.length) return;
     this.accumulate();
-    if (!this.adBag.length) {
+    const resume = this.data.progress.adResume;
+    const continuing = this.data.config.ads.find(ad => ad.id === resume?.id && ad.url === resume.url);
+    if (!continuing && !this.adBag.length) {
       this.adBag = [...this.data.config.ads];
       for (let index = this.adBag.length - 1; index > 0; index--) {
         const swap = Math.floor(this.random() * (index + 1));
@@ -239,14 +286,14 @@ export class PlaybackSession {
         [this.adBag[0], this.adBag[1]] = [this.adBag[1], this.adBag[0]];
       }
     }
-    this.ad = this.adBag.shift()!;
+    this.ad = continuing ?? this.adBag.shift()!;
     this.lastAdId = this.ad.id;
     this.data.progress.lastAdId = this.lastAdId;
     this.data.progress.adBagIds = this.adBag.map(ad => ad.id);
     this.data.progress.pendingAdMode = this.mode;
     this.status = 'ad';
     this.persist();
-    this.ports.pause(); this.emit(); this.ports.showAd(this.ad);
+    this.ports.pause(); this.emit(); this.ports.showAd(this.ad, continuing ? resume!.position : 0);
   }
   private cleanupAd(): void {
     if (!this.ad) return;
