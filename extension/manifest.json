@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "B 站时光机",
-  "version": "0.3.0",
-  "description": "按本地截止时间过滤当前 B 站视频、评论和 XML 弹幕。",
+  "version": "0.4.0",
+  "description": "按截止时间筛选 B 站视频和评论，用收藏偏好补充首页。支持动画连播和可跳过的公益广告。",
   "permissions": ["storage"],
   "host_permissions": [
     "https://www.bilibili.com/*",

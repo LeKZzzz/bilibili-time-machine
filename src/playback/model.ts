@@ -1,5 +1,13 @@
+import { createDefaultCatalog } from './catalog';
+
 export interface PlaybackEntry { id: string; title: string; url: string }
-export interface AnimationWork { id: string; title: string; entries: PlaybackEntry[] }
+export type AnimationWorkSourceStatus = 'pending' | 'resolved' | 'failed' | 'manual';
+export interface AnimationWork {
+  id: string;
+  title: string;
+  entries: PlaybackEntry[];
+  sourceStatus?: AnimationWorkSourceStatus;
+}
 export interface PlaybackConfig {
   order: 'round-robin' | 'sequential';
   animationAds: boolean;
@@ -18,9 +26,22 @@ export interface PlaybackProgress {
   adBagIds?: string[];
   lastAdId?: string;
   pendingAdMode?: 'animation' | 'normal';
+  adResume?: { id: string; url: string; position: number };
   stopReason?: string;
 }
 export interface PlaybackData { config: PlaybackConfig; progress: PlaybackProgress }
+
+const DEFAULT_SEED_WORKS = createDefaultCatalog().works;
+
+function sameSeedContent(left: AnimationWork, right: AnimationWork): boolean {
+  return left.id === right.id && left.title === right.title
+    && left.entries.length === right.entries.length
+    && left.entries.every((entry, index) => {
+      const other = right.entries[index];
+      return entry.id === other.id && entry.title === other.title
+        && normalizePlaybackUrl(entry.url) === normalizePlaybackUrl(other.url);
+    });
+}
 
 export function normalizePlaybackUrl(input: string): string | null {
   try {
@@ -43,20 +64,12 @@ export function normalizePlaybackUrl(input: string): string | null {
 }
 
 export function createDefaultPlaybackData(): PlaybackData {
+  const catalog = createDefaultCatalog();
   return {
     config: {
       order: 'round-robin', animationAds: true, normalAds: false, intervalMinutes: 20,
-      works: [{ id: 'pig-magic', title: '猪猪侠之魔幻猪猡纪', entries: [1, 2].map(part => ({
-        id: `pig-magic-${part}`, title: `第 ${part} 集`,
-        url: `https://www.bilibili.com/video/BV1Ex411q7SJ/?p=${part}`,
-      })) }, { id: 'happy-hero', title: '开心超人', entries: [1, 2].map(part => ({
-        id: `happy-hero-${part}`, title: `开心超人的诞生（${part === 1 ? '上' : '下'}）`,
-        url: `https://www.bilibili.com/video/BV1QJfPYQEYg/?p=${part}`,
-      })) }],
-      ads: [
-        { id: 'wash-feet', title: '妈妈，洗脚', url: 'https://www.bilibili.com/video/BV13r4y117HE/' },
-        { id: 'care-elders', title: '关爱老人，用心开始', url: 'https://www.bilibili.com/video/BV18s41167NT/' },
-      ],
+      works: catalog.works.map(work => ({ ...work, sourceStatus: 'pending' })),
+      ads: catalog.ads,
     },
     progress: { cursor: 0, position: 0, animationElapsedMs: 0, normalElapsedMs: 0, round: 0, failedEntryIds: [] },
   };
@@ -89,9 +102,20 @@ export function normalizePlaybackData(input: unknown): PlaybackData {
       animationAds: typeof config.animationAds === 'boolean' ? config.animationAds : true,
       normalAds: config.normalAds === true,
       intervalMinutes: Number.isFinite(config.intervalMinutes) && config.intervalMinutes > 0 ? config.intervalMinutes : 20,
-      works: Array.isArray(config.works) ? config.works.flatMap(work =>
-        work && typeof work.id === 'string' && typeof work.title === 'string'
-          ? [{ id: work.id, title: work.title, entries: entries(work.entries) }] : []) : defaults.config.works,
+      works: Array.isArray(config.works) ? config.works.flatMap(work => {
+        if (!work || typeof work.id !== 'string' || typeof work.title !== 'string') return [];
+        const normalized: AnimationWork = { id: work.id, title: work.title, entries: entries(work.entries) };
+        const seed = DEFAULT_SEED_WORKS.find(candidate => sameSeedContent(normalized, candidate));
+        const status = work.sourceStatus;
+        if (status === 'pending') {
+          normalized.sourceStatus = seed ? 'pending' : 'manual';
+        } else if (status === 'resolved' || status === 'failed' || status === 'manual') {
+          normalized.sourceStatus = status;
+        } else if (seed) {
+          normalized.sourceStatus = 'pending';
+        }
+        return [normalized];
+      }) : defaults.config.works,
       ads: Array.isArray(config.ads) ? entries(config.ads) : defaults.config.ads,
     };
   }
@@ -110,6 +134,11 @@ export function normalizePlaybackData(input: unknown): PlaybackData {
     defaults.progress.adBagIds = Array.isArray(progress.adBagIds)
       ? [...new Set(progress.adBagIds.filter(id => typeof id === 'string' && adIds.has(id)))] : [];
     defaults.progress.lastAdId = typeof progress.lastAdId === 'string' ? progress.lastAdId : '';
+    const adResume = progress.adResume;
+    if (adResume && Number.isFinite(adResume.position) && adResume.position >= 0) {
+      const ad = defaults.config.ads.find(entry => entry.id === adResume.id && entry.url === normalizePlaybackUrl(adResume.url));
+      if (ad) defaults.progress.adResume = { id: ad.id, url: ad.url, position: adResume.position };
+    }
     if (progress.pendingAdMode === 'animation' || progress.pendingAdMode === 'normal') defaults.progress.pendingAdMode = progress.pendingAdMode;
     if (typeof progress.stopReason === 'string') defaults.progress.stopReason = progress.stopReason;
   }

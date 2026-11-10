@@ -101,20 +101,20 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   const notices = createNoticeManager({ document: documentRef });
   const nativeSearchFilter = route.kind === 'search' ? createNativeSearchFilter(documentRef) : null;
   const repagination: SearchRepaginationHandle | null = route.kind === 'search'
-    ? getSearchRepagination({ document: documentRef, target, onNotice: () => { if (configReady) notices.show('跨页补齐失败，已退回逐页过滤。', 'repagination-failed'); } })
+    ? getSearchRepagination({ document: documentRef, target, onNotice: () => { if (configReady) notices.show('未能补充更多搜索结果，当前结果仍按截止时间筛选。', 'repagination-failed'); } })
     : null;
   const controller = createVideoController({
     root: documentRef,
     config: current,
     fetchVideo: createPageVideoFetcher(target),
     observe: true,
-    onNotice: (reason) => { if (configReady) notices.show('过滤器无法验证当前内容，相关内容已隐藏。', reason); },
+    onNotice: (reason) => { if (configReady) notices.show('无法确认部分内容的时间，已按过滤设置隐藏。要查看完整页面，请暂停过滤并刷新。', reason); },
   });
   const pageFetch = target.fetch ? target.fetch.bind(target) : undefined;
   let panel: FilterPanelController | undefined;
   const favoriteFill: FavoriteHomeFillController = createFavoriteHomeFillController({
     root: documentRef, config: current, fetch: pageFetch,
-    onNotice: () => { if (configReady) notices.show('收藏标签补位失败，本轮已停止。', 'favorite-fill-failed'); },
+    onNotice: () => { if (configReady) notices.show('未能补充首页内容。请打开“时光机”，查看收藏偏好中的提示后重试。', 'favorite-fill-failed'); },
     onSearchStateChange: (searching) => notices.setSearching(searching),
     onStateChange: (state) => panel?.updateFavoriteState(state),
   });
@@ -145,7 +145,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   const hook: NetworkHookHandle | null = route.installHook ? installNetworkHook({
     target,
     getConfig: () => (configReady ? resolveAutoAdvanceConfig(current) : initialConfig),
-    onNotice: (reason) => notices.show('过滤器无法验证当前内容，相关内容已隐藏。', reason),
+    onNotice: (reason) => notices.show('无法确认部分内容的时间，已按过滤设置隐藏。要查看完整页面，请暂停过滤并刷新。', reason),
     filterVideoResponse: repagination
       ? (url, payload, config) => repagination.transformVideo(url, payload, config)
       : undefined,
@@ -190,7 +190,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     if (__TIME_FILTER_DEV__) {
       devLog.log({ reason: 'config-read-failed', message: '配置读取失败', details: { source: 'userscript' } });
     }
-    notices.show('配置读取失败，内容已暂时隐藏。', 'config-read-failed');
+    notices.show('无法读取过滤设置，内容已隐藏。请刷新页面重试。', 'config-read-failed');
     panel?.update(pendingConfig);
   });
   return {

@@ -74,7 +74,7 @@ export function createNoticeManager(options: NoticeOptions = {}): NoticeManager 
     },
     setSearching(searching) {
       if (searching && !searchNotice) {
-        searchNotice = createItem('正在搜索补位视频…');
+        searchNotice = createItem('正在寻找符合截止时间的视频…');
         searchNotice.dataset.favoriteSearching = 'true';
         searchNotice.setAttribute('role', 'status');
         searchNotice.setAttribute('aria-busy', 'true');

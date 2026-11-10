@@ -74,13 +74,13 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     config: current,
     fetchVideo: createPageVideoFetcher(window),
     observe: true,
-    onNotice: (reason) => { if (configReady) notices.show('过滤器无法验证当前内容，相关内容已隐藏。', reason); },
+    onNotice: (reason) => { if (configReady) notices.show('无法确认部分内容的时间，已按过滤设置隐藏。要查看完整页面，请暂停过滤并刷新。', reason); },
   });
   const pageFetch = window.fetch ? window.fetch.bind(window) : undefined;
   let panel: FilterPanelController | undefined;
   const favoriteFill: FavoriteHomeFillController = createFavoriteHomeFillController({
     root: documentRef, config: current, fetch: pageFetch,
-    onNotice: () => { if (configReady) notices.show('收藏标签补位失败，本轮已停止。', 'favorite-fill-failed'); },
+    onNotice: () => { if (configReady) notices.show('未能补充首页内容。请打开“时光机”，查看收藏偏好中的提示后重试。', 'favorite-fill-failed'); },
     onSearchStateChange: (searching) => notices.setSearching(searching),
     onStateChange: (state) => panel?.updateFavoriteState(state),
   });
@@ -142,7 +142,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     if (__TIME_FILTER_DEV__) {
       devLog.log({ reason: 'config-read-failed', message: '配置读取失败', details: { source: 'mv3-content' } });
     }
-    notices.show('配置读取失败，内容已暂时隐藏。', 'config-read-failed');
+    notices.show('无法读取过滤设置，内容已隐藏。请刷新页面重试。', 'config-read-failed');
     panel?.update(pendingConfig);
   });
   return {

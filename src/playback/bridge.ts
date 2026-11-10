@@ -4,16 +4,56 @@ import { createDefaultPlaybackData } from './model';
 import type { PlaybackState } from './session';
 import { createPlaybackRuntime, defaultPlaybackState, PLAYBACK_STORAGE_KEY, type PlaybackRuntime } from './runtime';
 import type { PlaybackPanelClient } from '../ui/playback-panel';
+import { resolvePlaybackSource, type ResolvedPlaybackSource } from './source';
 
 const CHANNEL = 'bilibili-time-machine/playback';
+const SOURCE_FETCH_TIMEOUT_MS = 10_000;
+const SOURCE_RPC_TIMEOUT_MS = 15_000;
 function send(target: Window, payload: Record<string, unknown>): void {
   target.postMessage({ channel: CHANNEL, ...payload }, target.location.origin);
 }
 
-/** 隔离世界负责存储和界面，页面世界只接收本功能的配置与播放命令。 */
-export function createPlaybackBridgeClient(target: Window, storage: ConfigStorage): PlaybackPanelClient {
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function isResolvedSource(value: unknown): value is ResolvedPlaybackSource {
+  if (!value || typeof value !== 'object') return false;
+  const source = value as Partial<ResolvedPlaybackSource>;
+  return typeof source.title === 'string'
+    && ['parts', 'collection', 'season', 'single'].includes(String(source.kind))
+    && Array.isArray(source.entries)
+    && source.entries.every(entry => Boolean(entry)
+      && typeof entry.id === 'string' && typeof entry.title === 'string' && typeof entry.url === 'string');
+}
+
+function createSourceResolver(target: Window, fetcher?: typeof fetch): (url: string) => Promise<ResolvedPlaybackSource> {
+  // 在 Hook 安装前捕获页面 fetch，避免元数据请求经过后装的过滤包装器。
+  const request = fetcher ?? target.fetch?.bind(target);
+  const requestJson = async (url: string): Promise<unknown> => {
+    if (!request) throw new Error('当前无法获取视频信息，请刷新页面后重试。');
+    const controller = new AbortController();
+    const timer = target.setTimeout(() => controller.abort(), SOURCE_FETCH_TIMEOUT_MS);
+    try {
+      const response = await request(url, { credentials: 'include', signal: controller.signal });
+      if (!response.ok) throw new Error(`暂时无法获取视频信息（错误代码：HTTP ${response.status}），请稍后重试。`);
+      return await response.json() as unknown;
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error('获取视频信息超时，请稍后重试。');
+      if (error instanceof Error && error.message.startsWith('暂时无法获取视频信息（错误代码：HTTP ')) throw error;
+      throw new Error('暂时无法获取视频信息，请检查网络后重试。');
+    } finally {
+      target.clearTimeout(timer);
+    }
+  };
+  return input => resolvePlaybackSource(input, requestJson);
+}
+
+/** 客户端连接界面、GM／Chrome 存储与片源解析；页面侧通过桥读写进度、接收命令并回传状态。 */
+export function createPlaybackBridgeClient(target: Window, storage: ConfigStorage, fetcher?: typeof fetch): PlaybackPanelClient {
   let state: PlaybackState = { ...defaultPlaybackState(), status: 'loading', message: '正在读取播放设置' };
   const listeners = new Set<(state: PlaybackState) => void>();
+  const resolveSource = createSourceResolver(target, fetcher);
   let data: unknown;
   let loaded = false;
   let stoppedNotice = '';
@@ -26,7 +66,7 @@ export function createPlaybackBridgeClient(target: Window, storage: ConfigStorag
     if (message.type === 'command-result') {
       const command = commands.get(message.id);
       commands.delete(message.id);
-      if (message.error) command?.reject(new Error('播放操作或保存失败，请重试'));
+      if (message.error) command?.reject(new Error('操作未完成，请重试。'));
       else command?.resolve();
     }
     if (message.type === 'ready') initialize();
@@ -50,22 +90,28 @@ export function createPlaybackBridgeClient(target: Window, storage: ConfigStorag
         () => send(target, { type: 'read-result', id: message.id, error: true }),
       );
     }
+    if (message.type === 'resolve-source' && Number.isInteger(message.id) && typeof message.url === 'string') {
+      void resolveSource(message.url).then(
+        result => send(target, { type: 'source-result', id: message.id, result }),
+        error => send(target, { type: 'source-result', id: message.id, error: errorMessage(error, '未能获取视频信息，请稍后重试。') }),
+      );
+    }
   });
   void storage.get(PLAYBACK_STORAGE_KEY).then((value) => {
     data = value ?? createDefaultPlaybackData(); loaded = true; initialize();
   }).catch(() => {
-    state = { ...state, message: '播放配置读取失败，请刷新后重试。' };
+    state = { ...state, message: '无法读取播放设置，请刷新页面后重试。' };
     for (const listener of listeners) listener(state);
   });
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
     command(command) {
-      if (!loaded) throw new Error('播放设置尚未就绪');
+      if (!loaded) throw new Error('正在读取播放设置，请稍候再试。');
       return new Promise<void>((resolve, reject) => {
         const id = ++commandId;
         const timer = target.setTimeout(() => {
-          commands.delete(id); reject(new Error('播放控制器未响应，请刷新后重试'));
+          commands.delete(id); reject(new Error('播放操作未响应，请刷新页面后重试。'));
         }, 10_000);
         commands.set(id, {
           resolve() { target.clearTimeout(timer); resolve(); },
@@ -74,6 +120,7 @@ export function createPlaybackBridgeClient(target: Window, storage: ConfigStorag
         send(target, { type: 'command', command, id });
       });
     },
+    resolveSource,
   };
 }
 
@@ -83,6 +130,26 @@ export function installPlaybackBridgeHost(target: Window): void {
   let id = 0;
   const pending = new Map<number, { resolve(): void; reject(error: Error): void }>();
   const reads = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
+  const sourceRequests = new Map<number, {
+    resolve(value: ResolvedPlaybackSource): void;
+    reject(error: Error): void;
+    timer: number;
+  }>();
+  const resolveSource = (url: string): Promise<ResolvedPlaybackSource> => new Promise((resolve, reject) => {
+    const requestId = ++id;
+    const timer = target.setTimeout(() => {
+      sourceRequests.delete(requestId);
+      reject(new Error('获取视频信息超时，请稍后重试。'));
+    }, SOURCE_RPC_TIMEOUT_MS);
+    sourceRequests.set(requestId, { resolve, reject, timer });
+    try {
+      send(target, { type: 'resolve-source', id: requestId, url });
+    } catch {
+      target.clearTimeout(timer);
+      sourceRequests.delete(requestId);
+      reject(new Error('无法获取视频信息，请刷新页面后重试。'));
+    }
+  });
   const storage: ConfigStorage = {
     get() {
       return new Promise<unknown>((resolve, reject) => {
@@ -116,7 +183,7 @@ export function installPlaybackBridgeHost(target: Window): void {
     if (message.type === 'init' && !runtime && !initializing) {
       initializing = true;
       const mount = (): void => {
-        runtime = createPlaybackRuntime(target, message.data as PlaybackData, storage);
+        runtime = createPlaybackRuntime(target, message.data as PlaybackData, storage, resolveSource);
         runtime.subscribe((state) => send(target, { type: 'state', state }));
       };
       if (target.document.documentElement) mount();
@@ -136,6 +203,14 @@ export function installPlaybackBridgeHost(target: Window): void {
       reads.delete(message.id);
       if (message.error) request?.reject(new Error('播放进度读取失败'));
       else request?.resolve(message.data);
+    } else if (message.type === 'source-result' && Number.isInteger(message.id)) {
+      const request = sourceRequests.get(message.id);
+      if (!request) return;
+      sourceRequests.delete(message.id);
+      target.clearTimeout(request.timer);
+      if (typeof message.error === 'string') request.reject(new Error(message.error));
+      else if (isResolvedSource(message.result)) request.resolve(message.result);
+      else request.reject(new Error('未能获取视频信息，请稍后重试。'));
     }
   });
   send(target, { type: 'ready' });

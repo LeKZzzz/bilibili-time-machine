@@ -40,7 +40,7 @@ describe('真实播放器接入边界', () => {
     const onEvent = vi.fn();
     player = createPlaybackPlayer({ onEvent, shouldHoldEnded: () => false });
     player.refresh();
-    expect(onEvent).toHaveBeenCalledWith({ type: 'unavailable', reason: '当前条目仅可试看，已跳过' });
+    expect(onEvent).toHaveBeenCalledWith({ type: 'unavailable', reason: '当前视频仅支持试看，已跳过' });
     const nativeEnded = vi.fn();
     video.addEventListener('ended', nativeEnded);
     video.dispatchEvent(new Event('ended'));
@@ -62,7 +62,7 @@ describe('真实播放器接入边界', () => {
     player.refresh();
     window.history.replaceState(null, '', '/video/BV1Ex411q7SJ/?spm_id_from=333.788');
     managed = true; player.refresh();
-    expect(onEvent).toHaveBeenCalledWith({ type: 'unavailable', reason: '当前条目仅可试看，已跳过' });
+    expect(onEvent).toHaveBeenCalledWith({ type: 'unavailable', reason: '当前视频仅支持试看，已跳过' });
     window.history.replaceState(null, '', previousUrl);
   });
   it('替换媒体后继续监听，缓冲和拖动不变为失败', () => {
@@ -85,7 +85,7 @@ describe('真实播放器接入边界', () => {
     const onEvent = vi.fn();
     player = createPlaybackPlayer({ onEvent, shouldHoldEnded: () => false });
     await player.play();
-    expect(onEvent).toHaveBeenCalledWith({ type: 'blocked', reason: '点击继续播放' });
+    expect(onEvent).toHaveBeenCalledWith({ type: 'blocked', reason: '继续播放' });
     expect(onEvent.mock.calls.some(([event]) => event.type === 'unavailable')).toBe(false);
   });
   it('普通观看试看不暂停，也不将试看结束交给插播调度', () => {

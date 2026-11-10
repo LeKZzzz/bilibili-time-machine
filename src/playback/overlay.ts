@@ -1,12 +1,15 @@
 import { createPlaybackPlayer, type PlaybackPlayer } from './player';
 
 export const CONTROLLED_PLAYBACK_FRAME = 'bilibili-time-machine-ad';
+const AD_SEGMENT_LIMIT_MS = 60_000;
 
 export function createAdvertisementOverlay(options: {
   url: string;
   window?: Window;
   player: PlaybackPlayer;
-  onFinish(reason: 'ended' | 'skipped' | 'error'): void;
+  position?: number;
+  onProgress?(position: number): void;
+  onFinish(reason: 'ended' | 'skipped' | 'error' | 'segment'): void;
   onBlocked?(): void;
   onPlaying?(): void;
 }): { destroy(): void; resume(): void } {
@@ -28,7 +31,7 @@ export function createAdvertisementOverlay(options: {
     button{font:600 14px sans-serif;min-height:44px;padding:10px 16px;border:2px solid white;border-radius:8px;background:#17212e;color:white;cursor:pointer}
     button:focus-visible{outline:3px solid #ffd35c;outline-offset:3px}.resume[hidden]{display:none}
     .loading{position:absolute;left:12px;bottom:12px;background:#17212e;padding:8px;font:14px sans-serif}
-  </style><div class="loading" role="status">正在加载公益广告，可随时跳过</div><div class="controls"><button class="skip" type="button">跳过广告</button><button class="resume" type="button" hidden>点击继续播放</button></div>`;
+  </style><div class="loading" role="status">正在加载公益广告，可随时跳过</div><div class="controls"><button class="skip" type="button">跳过广告</button><button class="resume" type="button" hidden>继续播放</button></div>`;
   const skip = root.querySelector<HTMLButtonElement>('.skip')!;
   const resume = root.querySelector<HTMLButtonElement>('.resume')!;
   const controls = root.querySelector<HTMLElement>('.controls')!;
@@ -42,6 +45,12 @@ export function createAdvertisementOverlay(options: {
   let done = false;
   let requestedPlay = false;
   let lastMedia: HTMLVideoElement | null = null;
+  let position = Number.isFinite(options.position) && options.position! > 0 ? options.position! : 0;
+  let positionConfirmed = false;
+  let positioning = false;
+  let playing = false;
+  let lastPlayingAt: number | null = null;
+  let playedMs = 0;
   const hostElement = host as HTMLElement;
   const oldPosition = hostElement.style.position;
   const changedPosition = page.getComputedStyle(hostElement).position === 'static';
@@ -68,8 +77,27 @@ export function createAdvertisementOverlay(options: {
     if (usesPopover) controls.hidePopover();
     positionControls();
   };
+  const saveProgress = () => {
+    const media = adPlayer?.media();
+    if (!positionConfirmed || positioning || !media || media.seeking || !Number.isFinite(media.currentTime)) return;
+    position = Math.max(0, media.currentTime);
+    options.onProgress?.(position);
+  };
+  const accountPlayback = (now: number) => {
+    if (!playing || lastPlayingAt === null) return false;
+    playedMs += Math.max(0, now - lastPlayingAt);
+    lastPlayingAt = now;
+    return playedMs >= AD_SEGMENT_LIMIT_MS;
+  };
+  const stopPlaybackClock = () => {
+    const reachedLimit = accountPlayback(page.performance.now());
+    playing = false;
+    lastPlayingAt = null;
+    return reachedLimit;
+  };
   const destroy = () => {
     if (done) return;
+    saveProgress();
     done = true;
     page.clearInterval(timer);
     page.clearTimeout(loadTimeout);
@@ -86,12 +114,20 @@ export function createAdvertisementOverlay(options: {
     if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
     else if (original?.isConnected) original.focus({ preventScroll: true });
   };
-  const finish = (reason: 'ended' | 'skipped' | 'error') => {
+  const finish = (reason: 'ended' | 'skipped' | 'error' | 'segment') => {
     if (done) return;
     destroy();
     options.onFinish(reason);
   };
-  const continueAd = () => { resume.hidden = true; void adPlayer?.play(); };
+  const continueAd = () => {
+    resume.hidden = true;
+    if (!positionConfirmed) {
+      positioning = true;
+      adPlayer?.seek(position);
+    }
+    requestedPlay = true;
+    void adPlayer?.play();
+  };
   skip.addEventListener('click', () => finish('skipped'));
   resume.addEventListener('click', continueAd);
   document.addEventListener('play', preventOriginalPlayback, true);
@@ -117,10 +153,55 @@ export function createAdvertisementOverlay(options: {
         window: child,
         shouldHoldEnded: () => true,
         onEvent(event) {
-          if (event.type === 'ended') finish('ended');
-          else if (event.type === 'unavailable') finish('error');
-          else if (event.type === 'blocked') { resume.hidden = false; options.onBlocked?.(); }
-          else if (event.type === 'playing') { root.querySelector('.loading')?.remove(); options.onPlaying?.(); }
+          if (done) return;
+          if (event.type === 'media') {
+            const reachedLimit = stopPlaybackClock();
+            lastMedia = adPlayer?.media() ?? null;
+            positionConfirmed = false;
+            positioning = true;
+            if (reachedLimit) { finish('segment'); return; }
+            if (lastMedia) {
+              requestedPlay = true;
+              adPlayer?.seek(position);
+              void adPlayer?.play();
+            }
+          } else if (event.type === 'positioning') {
+            const reachedLimit = stopPlaybackClock();
+            positioning = true;
+            if (reachedLimit) finish('segment');
+          } else if (event.type === 'positioned') {
+            positioning = false;
+            positionConfirmed = true;
+            saveProgress();
+          } else if (event.type === 'playing') {
+            root.querySelector('.loading')?.remove();
+            options.onPlaying?.();
+            if (positionConfirmed && !positioning && !playing) {
+              playing = true;
+              lastPlayingAt = page.performance.now();
+            }
+          } else if (event.type === 'pause' || event.type === 'waiting' || event.type === 'seeking') {
+            const reachedLimit = stopPlaybackClock();
+            if (event.type === 'seeking') positioning = true;
+            saveProgress();
+            if (reachedLimit) finish('segment');
+          } else if (event.type === 'seeked') {
+            positioning = false;
+            saveProgress();
+          } else if (event.type === 'ended') {
+            stopPlaybackClock();
+            saveProgress();
+            finish('ended');
+          } else if (event.type === 'unavailable') {
+            stopPlaybackClock();
+            saveProgress();
+            finish('error');
+          } else if (event.type === 'blocked') {
+            const reachedLimit = stopPlaybackClock();
+            saveProgress();
+            if (reachedLimit) finish('segment');
+            else { resume.hidden = false; options.onBlocked?.(); }
+          }
         },
       });
     } catch { finish('error'); }
@@ -130,8 +211,29 @@ export function createAdvertisementOverlay(options: {
     options.player.pause();
     const media = adPlayer?.media();
     if (media) page.clearTimeout(loadTimeout);
-    if (media !== lastMedia) { lastMedia = media ?? null; requestedPlay = false; }
+    if (media !== lastMedia) {
+      const reachedLimit = stopPlaybackClock();
+      lastMedia = media ?? null;
+      positionConfirmed = false;
+      positioning = true;
+      if (reachedLimit) { finish('segment'); return; }
+      if (media) {
+        requestedPlay = true;
+        adPlayer?.seek(position);
+        void adPlayer?.play();
+      }
+    }
     if (media && !requestedPlay) { requestedPlay = true; void adPlayer?.play(); }
+    if (playing && (!positionConfirmed || positioning || !media || media.paused || media.seeking || media.readyState < 2)) {
+      const reachedLimit = stopPlaybackClock();
+      saveProgress();
+      if (reachedLimit) { finish('segment'); return; }
+    } else if (accountPlayback(page.performance.now())) {
+      saveProgress();
+      finish('segment');
+      return;
+    }
+    saveProgress();
   }, 250);
   // 仅限制播放器首次载入；媒体出现后的暂停和缓冲不设失败倒计时。
   const loadTimeout = page.setTimeout(() => finish('error'), 30_000);

@@ -50,6 +50,36 @@ beforeEach(() => {
 afterEach(async () => { runtime?.destroy(); await flush(); vi.clearAllTimers(); vi.useRealTimers(); document.body.innerHTML = ''; });
 
 describe('真实播放器与会话的起播接线', () => {
+  it('连播中原生切 P 自动接入，地址先变时不播放或记录旧媒体尾段', async () => {
+    await mount(0); settle(0);
+    video.currentTime = 900; emit('seeking'); emit('seeked');
+    vi.mocked(video.play).mockClear();
+    window.history.pushState(null, '', '/video/BV1Ex411q7SJ/?p=2');
+    emit('playing'); await flush();
+    expect(runtime.getState()).toMatchObject({ mode: 'animation', status: 'loading', current: { id: 'pig-magic-2' } });
+    expect(video.currentTime).toBe(900); expect(video.play).not.toHaveBeenCalled();
+    const nativeEnded = vi.fn(); video.addEventListener('ended', nativeEnded);
+    video.currentTime = 1600; set({ ended: true }); emit('ended'); await flush();
+    expect(nativeEnded).not.toHaveBeenCalled(); expect(runtime.getState().current?.id).toBe('pig-magic-2');
+    expect(saved?.progress.position).toBe(0);
+    set({ readyState: 0, ended: false, paused: true }); emit('loadstart');
+    video.currentTime = 1.5; set({ readyState: 4 }); emit('loadedmetadata'); await flush();
+    settle(1.5); await vi.advanceTimersByTimeAsync(5000);
+    expect(runtime.getState()).toMatchObject({ mode: 'animation', status: 'playing', current: { id: 'pig-magic-2' } });
+    expect(saved?.progress.position).toBeCloseTo(1.8);
+  });
+
+  it('手动切 P 加载期间退出，不被新媒体元数据重新启动', async () => {
+    await mount(0); settle(0);
+    window.history.pushState(null, '', '/video/BV1Ex411q7SJ/?p=2');
+    emit('waiting'); await runtime.command({ type: 'exit' });
+    vi.mocked(video.play).mockClear();
+    set({ readyState: 0, paused: true }); emit('loadstart');
+    video.currentTime = 0; set({ readyState: 4 }); emit('loadedmetadata'); emit('canplay');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(video.play).not.toHaveBeenCalled(); expect(runtime.getState().mode).toBe('normal');
+  });
+
   it.each([0, 567])('元数据迟到且先进入waiting时仍定位到%s，稳定播放后才保存媒体位置', async position => {
     await mount(position, 0);
     video.currentTime = 1570; emit('waiting');
@@ -145,7 +175,7 @@ describe('真实播放器与会话的起播接线', () => {
     vi.mocked(video.play).mockClear(); set({ readyState: 4 }); emit('waiting'); emit('canplay');
     await vi.advanceTimersByTimeAsync(60_000);
     expect(video.play).not.toHaveBeenCalled();
-    expect(runtime.getState()).toMatchObject({ status: 'blocked', message: '点击继续播放' });
+    expect(runtime.getState()).toMatchObject({ status: 'blocked', message: '继续播放' });
   });
 
   it.each(['pause', 'blocked', 'position-conflict'])('%s后点击继续重新定位保存目标并恢复计时', async reason => {
@@ -169,7 +199,7 @@ describe('真实播放器与会话的起播接线', () => {
   it('主动导航取消旧条目的初始化，不在普通页纠正位置或重试播放', async () => {
     await mount(567, 1);
     vi.mocked(video.play).mockClear();
-    window.history.replaceState(null, '', '/video/BV1QJfPYQEYg/');
+    window.history.replaceState(null, '', '/video/BV1AA411x7AB/');
     video.currentTime = 1570; set({ paused: true, readyState: 4 });
     await vi.advanceTimersByTimeAsync(5000);
     expect(video.play).not.toHaveBeenCalled();

@@ -14,8 +14,8 @@ const userScriptBanner = `// ==UserScript==
 // @namespace    https://github.com/bilibili-time-filter
 // @homepageURL  https://github.com/LeKZzzz/bilibili-time-machine
 // @supportURL   https://github.com/LeKZzzz/bilibili-time-machine/issues
-// @version      0.3.0
-// @description  只显示早于本地截止时间的当前 B 站内容
+// @version      0.4.0
+// @description  按截止时间筛选 B 站视频和评论，用收藏偏好补充首页。支持动画连播和可跳过的公益广告。
 // @license      MIT
 // @match        https://www.bilibili.com/*
 // @match        https://search.bilibili.com/*
@@ -37,7 +37,7 @@ type BuildFlavor = 'release' | 'dev';
 interface BuildVariant {
   target: BuildTarget;
   flavor: BuildFlavor;
-  /** 该模式是否是 MV3 content script（primary）入口。 */
+  /** 仅用于 MV3：true 构建 ISOLATED 入口，false 构建 MAIN 页面入口。 */
   content?: boolean;
   outDir: string;
 }

@@ -1,6 +1,6 @@
 /**
- * MV3 MAIN world 入口只负责页面上下文桥接。
- * 网络 Hook 可以监听下列两个 CustomEvent，不依赖 chrome.* API。
+ * MV3 页面入口负责网络过滤、搜索补齐及独立播放控制。
+ * 通过消息桥连接 ISOLATED 侧的界面、存储和片源解析，不直接调用 chrome.*。
  */
 
 import { installNetworkHook } from '../page/network-hook';
@@ -85,13 +85,13 @@ function mountRoute(): void {
     ? getSearchRepagination({
       document,
       target: window,
-      onNotice: () => emitMainWorldNotice('跨页补齐失败，已退回逐页过滤。', 'repagination-failed'),
+      onNotice: () => emitMainWorldNotice('未能补充更多搜索结果，当前结果仍按截止时间筛选。', 'repagination-failed'),
     })
     : null;
   hook = installNetworkHook({
     target: window,
     getConfig: () => (configResolved && currentConfig ? resolveAutoAdvanceConfig(currentConfig) : configReady),
-    onNotice: (reason) => emitMainWorldNotice('过滤器无法验证当前内容，相关内容已隐藏。', reason),
+    onNotice: (reason) => emitMainWorldNotice('无法确认部分内容的时间，已按过滤设置隐藏。要查看完整页面，请暂停过滤并刷新。', reason),
     filterVideoResponse: repagination
       ? (url, payload, config) => repagination?.transformVideo(url, payload, config)
       : undefined,
