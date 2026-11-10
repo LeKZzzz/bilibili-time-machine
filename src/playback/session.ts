@@ -156,7 +156,7 @@ export class PlaybackSession {
 
   async resumeNavigation(failureReason?: string): Promise<void> {
     if (!playbackQueue(this.data.config).length) {
-      this.status = 'stopped'; this.message = '请先添加动画条目'; this.emit(); return;
+      this.status = 'stopped'; this.message = '请先添加作品和分集。'; this.emit(); return;
     }
     this.transitioning = false;
     this.mode = 'animation';
@@ -189,7 +189,7 @@ export class PlaybackSession {
   }
   mediaPlaying(): void {
     if (this.ad) { this.ports.pause(); return; }
-    if (this.status === 'blocked' && this.message === '点击继续播放') this.message = '';
+    if (this.status === 'blocked' && this.message === '继续播放') this.message = '';
     this.playingSince ??= this.now();
     this.status = this.due() && this.mode === 'normal' ? 'waiting-end' : 'playing';
     this.emit();
@@ -207,7 +207,7 @@ export class PlaybackSession {
     this.data.progress.adResume = { id: ad.id, url: ad.url, position };
   }
   autoplayBlocked(): void {
-    this.accumulate(); this.status = 'blocked'; this.message = '点击继续播放'; this.emit();
+    this.accumulate(); this.status = 'blocked'; this.message = '继续播放'; this.emit();
   }
   tick(): void {
     const wasPlaying = this.playingSince !== null;
@@ -241,7 +241,7 @@ export class PlaybackSession {
     this.message = reason;
     const queue = playbackQueue(this.data.config);
     if (queue.every(entry => this.data.progress.failedEntryIds.includes(entry.id))) {
-      this.data.progress.stopReason = '整份片单均无法播放，请检查片源';
+      this.data.progress.stopReason = '片单中的视频暂时都无法播放，请检查网络及这些视频的访问权限后重试。';
       this.stop(true); this.status = 'stopped'; this.message = this.data.progress.stopReason; this.emit();
     } else void this.advance();
   }
@@ -317,7 +317,7 @@ export class PlaybackSession {
   }
   private async navigateCurrent(): Promise<void> {
     const entry = this.getState().current;
-    if (!entry) { this.stop(true); this.status = 'stopped'; this.message = '请先添加动画条目'; this.emit(); return; }
+    if (!entry) { this.stop(true); this.status = 'stopped'; this.message = '请先添加作品和分集。'; this.emit(); return; }
     const generation = ++this.generation;
     this.transitioning = true; this.pendingNavigation = true; this.status = 'loading'; this.emit();
     try {
@@ -329,7 +329,7 @@ export class PlaybackSession {
       await this.ports.navigate(entry, this.data.progress.position);
     } catch {
       if (generation === this.generation) {
-        this.pendingNavigation = true; this.status = 'blocked'; this.message = '无法保存进度或切换视频，请重试';
+        this.pendingNavigation = true; this.status = 'blocked'; this.message = '未能保存进度或切换视频，请选择“继续播放”重试。';
       }
     } finally {
       if (generation === this.generation) { this.transitioning = false; this.emit(); }
@@ -337,7 +337,7 @@ export class PlaybackSession {
   }
   private persist(): void {
     void this.saveSnapshot().catch(() => {
-      this.message = '进度保存失败，请检查存储空间'; this.emit();
+      this.message = '观看进度未能保存，离开页面后可能无法恢复到当前位置。请检查浏览器是否允许扩展或脚本保存数据。'; this.emit();
     });
   }
   private async saveSnapshot(): Promise<void> { await this.ports.save(this.getData()); }

@@ -42,7 +42,7 @@ describe('播放会话', () => {
     const { session, advanceTime } = fixture();
     await session.start(); session.autoplayBlocked();
     session.mediaWaiting(); session.mediaPaused(); advanceTime(60_000);
-    expect(session.getState()).toMatchObject({ status: 'blocked', message: '点击继续播放', elapsedMs: 0 });
+    expect(session.getState()).toMatchObject({ status: 'blocked', message: '继续播放', elapsedMs: 0 });
     session.continuePlayback(); session.mediaPlaying();
     expect(session.getState().status).toBe('playing');
     advanceTime(60_000); session.autoplayBlocked(); session.mediaPaused();

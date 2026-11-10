@@ -35,18 +35,18 @@ export function playbackUnavailableReason(page: Window): string | null {
   // 只看当前条目的明确播放判定，季级会员标识不代表当前账号无权观看。
   const decision = JSON.stringify(detail ?? '');
   if (videoInfo.is_preview === true || result.is_preview === true || decision.includes('PLAY_PREVIEW')) {
-    return '当前条目仅可试看，已跳过';
+    return '当前视频仅支持试看，已跳过';
   }
-  if (/PLAY_(?:PAY|BUY|FORBIDDEN|DENIED|AREA_LIMIT)/.test(decision)) return '当前条目需要购买或无完整观看权限';
+  if (/PLAY_(?:PAY|BUY|FORBIDDEN|DENIED|AREA_LIMIT)/.test(decision)) return '当前视频受播放权限或地区限制，无法完整播放。';
   if (typeof info.code === 'number' && info.code !== 0) {
-    return typeof info.message === 'string' ? info.message : '当前条目无法播放';
+    return `当前视频暂时无法播放（错误代码：${info.code}）。`;
   }
   const document = page.document;
   const blocking = document.querySelector(
     '.bpx-player-ending-panel, .bpx-player-toast-wrap, .bpx-player-dialog-wrap, .bilibili-player-video-toast, .error-container, .error-panel',
   )?.textContent ?? '';
   if (/试看已结束|仅可试看|应版权方要求|所在地区.*无法|视频已失效|视频已被删除|视频不见了/.test(blocking)) {
-    return '当前条目已受播放限制或失效';
+    return '当前视频受播放限制或已失效';
   }
   if (/视频去哪了|视频不见了/.test(document.title)) return '当前视频已失效';
   return null;
@@ -117,7 +117,7 @@ export function createPlaybackPlayer(options: {
     // 初始化只允许一次纠正；持续争抢位置时交还用户，不循环拖动或跳过条目。
     if (request.attempts >= 2) {
       cancelPosition(); media.pause();
-      options.onEvent({ type: 'blocked', reason: '起播位置被改变，请点击继续播放' });
+      options.onEvent({ type: 'blocked', reason: '无法恢复播放位置，请选择“继续播放”。' });
       return false;
     }
     request.media = media; request.attempts++; request.sample = null;
@@ -148,12 +148,12 @@ export function createPlaybackPlayer(options: {
       if (destroyed || generation !== playGeneration || target !== media) return;
       if ((error as { name?: string }).name === 'NotAllowedError') {
         cancelPosition();
-        options.onEvent({ type: 'blocked', reason: '点击继续播放' });
+        options.onEvent({ type: 'blocked', reason: '继续播放' });
       } else if ((error as { name?: string }).name === 'AbortError') {
         options.onEvent({ type: 'pause' });
       } else if (managed() && !failedMedia.has(target)) {
         cancelPosition(); failedMedia.add(target);
-        options.onEvent({ type: 'unavailable', reason: '无法开始播放当前条目' });
+        options.onEvent({ type: 'unavailable', reason: '当前视频暂时无法播放' });
       }
     } finally { if (generation === playGeneration) playingRequest = false; }
   };
@@ -224,7 +224,7 @@ export function createPlaybackPlayer(options: {
     } else if (event.type === 'error') {
       if (media && !failedMedia.has(media)) {
         failedMedia.add(media);
-        if (managed()) options.onEvent({ type: 'unavailable', reason: '媒体加载或解码失败' });
+        if (managed()) options.onEvent({ type: 'unavailable', reason: '当前视频加载失败或无法播放' });
       }
     } else {
       options.onEvent({ type: event.type as PlaybackPlayerEvent['type'] });

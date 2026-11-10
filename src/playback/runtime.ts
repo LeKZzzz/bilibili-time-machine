@@ -250,9 +250,9 @@ export function createPlaybackRuntime(target: Window, data: PlaybackData, storag
       try { await write; } finally { if (catalogWrite === write) catalogWrite = undefined; }
       if (!current()) return;
       const failed = [...patches.values()].filter(work => work.sourceStatus === 'failed').length;
-      catalogMessage = failed ? `片单补全完成，${failed} 部解析失败，已保留原有条目。` : '内置片单已自动补全并保存。';
+      catalogMessage = failed ? `片单补全完成，${failed} 部未能获取分集，已保留原有内容。` : '内置片单已自动补全并保存。';
     } catch {
-      if (current()) catalogMessage = '自动补全保存失败，现有片单保持不变，请重新打开频道重试。';
+      if (current()) catalogMessage = '未能保存补全结果，现有片单未更改。请切换到其他标签页，再回到“动画时光机”重试。';
     } finally {
       if (current()) { catalogResolving = false; notify(session.getState()); }
     }
@@ -289,7 +289,7 @@ export function createPlaybackRuntime(target: Window, data: PlaybackData, storag
       else if (event.type === 'waiting' || event.type === 'seeking') session.mediaWaiting();
       else if (event.type === 'unavailable') {
         followingPage = undefined;
-        session.mediaFailed(event.reason ?? '当前片源无法完整播放');
+        session.mediaFailed(event.reason ?? '当前视频无法完整播放');
       }
       else if (event.type === 'blocked') session.autoplayBlocked();
       else if (event.type === 'media' && session.getState().mode === 'animation'
@@ -436,7 +436,7 @@ export function createPlaybackRuntime(target: Window, data: PlaybackData, storag
   notify(session.getState());
   return {
     getState: () => withCatalogState(session.getState()), command,
-    resolveSource: url => resolveSource ? resolveSource(url) : Promise.reject(new Error('片源解析尚未就绪')),
+    resolveSource: url => resolveSource ? resolveSource(url) : Promise.reject(new Error('暂时无法获取视频信息，请稍后重试。')),
     subscribe(listener) { listeners.add(listener); listener(withCatalogState(session.getState())); return () => listeners.delete(listener); },
     destroy() {
       if (destroyed) return;

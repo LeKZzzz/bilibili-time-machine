@@ -85,13 +85,13 @@ function mountRoute(): void {
     ? getSearchRepagination({
       document,
       target: window,
-      onNotice: () => emitMainWorldNotice('跨页补齐失败，已退回逐页过滤。', 'repagination-failed'),
+      onNotice: () => emitMainWorldNotice('未能补充更多搜索结果，当前结果仍按截止时间筛选。', 'repagination-failed'),
     })
     : null;
   hook = installNetworkHook({
     target: window,
     getConfig: () => (configResolved && currentConfig ? resolveAutoAdvanceConfig(currentConfig) : configReady),
-    onNotice: (reason) => emitMainWorldNotice('过滤器无法验证当前内容，相关内容已隐藏。', reason),
+    onNotice: (reason) => emitMainWorldNotice('无法确认部分内容的时间，已按过滤设置隐藏。要查看完整页面，请暂停过滤并刷新。', reason),
     filterVideoResponse: repagination
       ? (url, payload, config) => repagination?.transformVideo(url, payload, config)
       : undefined,

@@ -14,8 +14,8 @@ const userScriptBanner = `// ==UserScript==
 // @namespace    https://github.com/bilibili-time-filter
 // @homepageURL  https://github.com/LeKZzzz/bilibili-time-machine
 // @supportURL   https://github.com/LeKZzzz/bilibili-time-machine/issues
-// @version      0.3.0
-// @description  按时间过滤 B 站视频、评论和 XML 弹幕，支持收藏偏好补位、动画片单连播与可跳过的公益广告分段续播。
+// @version      0.4.0
+// @description  按截止时间筛选 B 站视频和评论，用收藏偏好补充首页。支持动画连播和可跳过的公益广告。
 // @license      MIT
 // @match        https://www.bilibili.com/*
 // @match        https://search.bilibili.com/*

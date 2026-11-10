@@ -91,6 +91,7 @@ describe('createFilterPanel', () => {
     favoriteEnabled.dispatchEvent(new Event('change'));
     expect(root.querySelector<HTMLElement>('#favorite-folders-dialog')!.hidden).toBe(false);
     expect(favoriteEnabled.checked).toBe(false);
+    expect(root.querySelector('#favorite-folders-save')!.textContent).toBe('保存并启用');
 
     controller.destroy();
   });
@@ -198,7 +199,7 @@ describe('createFilterPanel', () => {
     enabled.checked = false;
     enabled.dispatchEvent(new Event('change'));
     resolve([{ id: '1', title: '不应写入的收藏夹' }]);
-    await vi.waitFor(() => expect(root.querySelector('#favorite-folder-status')!.textContent).toContain('开启收藏补位'));
+    await vi.waitFor(() => expect(root.querySelector('#favorite-folder-status')!.textContent).toContain('选择收藏夹并保存'));
     expect(refresh.disabled).toBe(true);
     expect(root.querySelectorAll('.folder-option')).toHaveLength(0);
     controller.destroy();
@@ -221,8 +222,8 @@ describe('createFilterPanel', () => {
     help.focus();
     const tooltip = root.querySelector<HTMLElement>('#setting-tooltip')!;
     expect(tooltip.hidden).toBe(false);
-    expect(tooltip.textContent).toContain('按账号缓存');
-    expect(tooltip.textContent).toContain('手动刷新');
+    expect(tooltip.textContent).toContain('当前账号的收藏夹列表');
+    expect(tooltip.textContent).toContain('更新收藏偏好');
     expect(help.getAttribute('aria-describedby')).toBe(tooltip.id);
     help.blur();
     expect(tooltip.hidden).toBe(true);
@@ -250,6 +251,24 @@ describe('createFilterPanel', () => {
     expect(root?.querySelector('#favorite-snapshot')?.textContent).toContain('8 个标签');
     expect(refresh.disabled).toBe(false);
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ favoriteRefreshRequestedAt: expect.any(Number) }));
+    controller.destroy();
+  });
+
+  it('根据失败阶段指向可用的重试操作，保存失败不猜测原因', () => {
+    const controller = createFilterPanel({ document,
+      config: { cutoffMinute: '2020-01-01T00:00:00', enabled: true, supplementBudget: 20, debug: false, favoriteHomeFillEnabled: true, favoriteFolderIds: ['1'] },
+      onFavoriteContinue: vi.fn(),
+    });
+    const root = controller.element.shadowRoot!;
+    const status = root.querySelector('#favorite-work-status')!;
+    controller.updateFavoriteState({ phase: 'error', errorStage: 'preferences', hasCachedPreferences: true });
+    expect(status.textContent).toBe('收藏偏好更新失败。已保留原有偏好。请点击“更新收藏偏好”重试。');
+    expect(root.querySelector<HTMLButtonElement>('#favorite-refresh')!.disabled).toBe(false);
+    controller.updateFavoriteState({ phase: 'error', errorStage: 'search' });
+    expect(status.textContent).toBe('视频搜索失败。请点击“继续寻找”重试。');
+    expect(root.querySelector<HTMLButtonElement>('#favorite-continue')!.disabled).toBe(false);
+    controller.updateFavoriteState({ phase: 'error', errorStage: 'storage' });
+    expect(status.textContent).toBe('本次结果未能保存，请稍后刷新页面重试。');
     controller.destroy();
   });
 
@@ -302,7 +321,7 @@ describe('createFilterPanel', () => {
     const updatedAt = new Date(2026, 9, 25, 11, 24, 49).getTime();
     controller.updateFavoriteState({ phase: 'ready', sourceCount: 10, tagCount: 100, updatedAt });
     const updated = root.querySelector<HTMLTimeElement>('#favorite-updated')!;
-    expect(root.querySelector('#favorite-counts')!.textContent).toBe('10 个来源 · 100 个标签');
+    expect(root.querySelector('#favorite-counts')!.textContent).toBe('10 个收藏夹 · 100 个标签');
     expect(updated.textContent).toBe('10-25 11:24 更新');
     expect(updated.dateTime).toBe(new Date(updatedAt).toISOString());
     expect(updated.title).toBe('更新于 2026-10-25 11:24:49');

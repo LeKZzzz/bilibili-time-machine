@@ -31,12 +31,12 @@ function setup() {
     playback: { getState: () => state, subscribe: callback => { listener = callback; return unsubscribe; }, command, resolveSource } });
   const root = panel.element.shadowRoot!;
   const get = <T extends HTMLElement>(id: string) => root.querySelector<T>(`#playback-${id}`)!;
-  root.querySelector<HTMLButtonElement>('.toggle')!.click(); get('open').click();
+  root.querySelector<HTMLButtonElement>('.toggle')!.click(); root.querySelector<HTMLButtonElement>('#playback-tab')!.click();
   return { panel, root, get, command, resolveSource, onChange, unsubscribe, update: (next: Partial<PlaybackState>) => { state = { ...state, ...next }; listener(state); } };
 }
 
 describe('playback panel', () => {
-  it('starts independently of cutoff and announces default advertising, returns keyboard focus', () => {
+  it('starts independently of cutoff and announces default advertising, switches through top tabs', () => {
     const { panel, root, get, command, onChange, unsubscribe } = setup();
     expect(get('dialog').hidden).toBe(false);
     expect(get<HTMLInputElement>('animation-ads').checked).toBe(true);
@@ -46,9 +46,76 @@ describe('playback panel', () => {
     get('start').click();
     expect(command).toHaveBeenCalledWith({ type: 'start' });
     expect(onChange).not.toHaveBeenCalled();
-    get('back').click();
-    expect(root.activeElement).toBe(get('open'));
+    root.querySelector<HTMLButtonElement>('#filter-tab')!.click();
+    expect(get('dialog').hidden).toBe(true);
+    expect(root.querySelector<HTMLElement>('#main-view')!.hidden).toBe(false);
     panel.destroy(); expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('标签页支持方向键切换，保留两边草稿，更新配置和重新打开仍留在当前页', () => {
+    const { panel, root, get, command, onChange } = setup();
+    const filterTab = root.querySelector<HTMLButtonElement>('#filter-tab')!;
+    const playbackTab = root.querySelector<HTMLButtonElement>('#playback-tab')!;
+    const interval = get<HTMLInputElement>('interval');
+    interval.value = '25';
+    interval.dispatchEvent(new Event('input'));
+    playbackTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    expect(root.activeElement).toBe(filterTab);
+    expect(filterTab.getAttribute('aria-selected')).toBe('true');
+    expect(playbackTab.tabIndex).toBe(-1);
+    const date = root.querySelector<HTMLInputElement>('#cutoff-date')!;
+    date.value = '2020-01-02';
+    date.dispatchEvent(new Event('input'));
+    filterTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    expect(root.activeElement).toBe(playbackTab);
+    expect(playbackTab.getAttribute('aria-selected')).toBe('true');
+    expect(filterTab.tabIndex).toBe(-1);
+    expect(interval.value).toBe('25');
+    panel.update({ cutoffMinute: null, enabled: false, supplementBudget: 10, debug: false });
+    expect(get('dialog').hidden).toBe(false);
+    root.querySelector<HTMLButtonElement>('.close')!.click();
+    expect(root.querySelector<HTMLElement>('.card')!.hidden).toBe(true);
+    root.querySelector<HTMLButtonElement>('.toggle')!.click();
+    expect(get('dialog').hidden).toBe(false);
+    playbackTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    expect(root.activeElement).toBe(filterTab);
+    expect(date.value).toBe('2020-01-02');
+    expect(command).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+
+  it('广告开关保存前显示待生效提示，计时始终依据已生效的对应模式设置', async () => {
+    const { panel, get, command, update } = setup();
+    const animationAds = get<HTMLInputElement>('animation-ads');
+    const normalAds = get<HTMLInputElement>('normal-ads');
+    expect(get('clock').textContent).toBe('普通观看片尾插播已关闭');
+    update({ mode: 'animation', status: 'playing', elapsedMs: 65000 });
+    expect(get('clock').textContent).toBe('累计观看 1 分 5 秒 · 广告间隔 20 分钟');
+
+    animationAds.checked = false;
+    animationAds.dispatchEvent(new Event('change'));
+    normalAds.checked = true;
+    normalAds.dispatchEvent(new Event('change'));
+    expect(get('ad-notice').textContent).toBe('动画中途插播将关闭；普通观看片尾插播将开启，保存后生效。');
+    expect(get('clock').textContent).toContain('广告间隔 20 分钟');
+    command.mockImplementation(async action => {
+      if (action.type === 'save-config') update({ config: action.config });
+    });
+    get('save').click();
+    await vi.waitFor(() => expect(get('feedback').textContent).toBe('播放设置已保存'));
+    expect(get('ad-notice').textContent).toBe('动画中途插播已关闭。');
+    expect(get('clock').textContent).toBe('动画中途插播已关闭');
+    update({ mode: 'normal', status: 'idle' });
+    expect(get('clock').textContent).toContain('累计观看 1 分 5 秒');
+
+    animationAds.checked = true;
+    animationAds.dispatchEvent(new Event('change'));
+    expect(get('ad-notice').textContent).toBe('动画中途插播将开启，保存后生效。');
+    animationAds.checked = false;
+    animationAds.dispatchEvent(new Event('change'));
+    expect(get('ad-notice').textContent).toBe('动画中途插播已关闭。');
+    panel.destroy();
   });
 
   it('用通用弹窗手动添加作品和集数，草稿统一保存', async () => {
@@ -71,9 +138,9 @@ describe('playback panel', () => {
     expect(root.activeElement).toBe(get('details-add'));
     get('details-close').click();
     get<HTMLInputElement>('interval').value = '150'; get('interval').dispatchEvent(new Event('input'));
-    update({ elapsedMs: 65000 });
+    update({ elapsedMs: 65000, config: { ...createDefaultPlaybackData().config, normalAds: true } });
     expect(get<HTMLInputElement>('interval').value).toBe('150');
-    expect(get('clock').textContent).toContain('1:05');
+    expect(get('clock').textContent).toContain('累计观看 1 分 5 秒');
     get('save').click(); await Promise.resolve();
     const saved = command.mock.calls.at(-1)![0];
     expect(saved.type).toBe('save-config');
@@ -122,6 +189,7 @@ describe('playback panel', () => {
 
   it('keeps newer edits unsaved when an earlier save finishes', async () => {
     const { panel, get, command, update } = setup();
+    update({ config: { ...createDefaultPlaybackData().config, normalAds: true } });
     let finishSave!: () => void;
     command.mockImplementationOnce(async action => {
       if (action.type !== 'save-config') throw new Error('缺少保存命令');
@@ -133,7 +201,7 @@ describe('playback panel', () => {
     interval.value = '25'; interval.dispatchEvent(new Event('input')); save.click();
     interval.value = '30'; interval.dispatchEvent(new Event('input'));
     finishSave();
-    await vi.waitFor(() => expect(get('clock').textContent).toContain('/ 25 分钟'));
+    await vi.waitFor(() => expect(get('clock').textContent).toContain('广告间隔 25 分钟'));
     expect(interval.value).toBe('30');
     expect(save.disabled).toBe(false);
     expect(get('feedback').textContent).toBe('设置尚未保存');
@@ -180,7 +248,7 @@ describe('playback panel', () => {
       url.value = 'https://www.bilibili.com/video/BV1Ex411q7SJ/';
       url.dispatchEvent(new Event('input'));
       get<HTMLFormElement>('add-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-      await vi.waitFor(() => expect(get('add-status').textContent).toContain('已解析'));
+      await vi.waitFor(() => expect(get('add-status').textContent).toContain('已找到'));
       const choices = get('add-preview').querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
       expect(choices).toHaveLength(2);
       if (!selectSecond) { choices[1].checked = false; choices[1].dispatchEvent(new Event('change')); }
@@ -244,14 +312,14 @@ describe('playback panel', () => {
     const url = get<HTMLInputElement>('add-url');
     url.value = 'https://www.bilibili.com/video/BV1Ex411q7SJ/'; url.dispatchEvent(new Event('input'));
     get<HTMLFormElement>('add-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    await vi.waitFor(() => expect(get('add-status').textContent).toContain('解析失败：网络不可用'));
+    await vi.waitFor(() => expect(get('add-status').textContent).toContain('网络不可用'));
     expect(get<HTMLButtonElement>('add-confirm').disabled).toBe(true);
     expect(get('add-preview').children).toHaveLength(0);
 
     resolveSource.mockResolvedValueOnce({ title: '空结果', kind: 'parts', entries: [] });
     url.value = 'https://www.bilibili.com/video/BV1Ex411q7SJ/?p=2'; url.dispatchEvent(new Event('input'));
     get<HTMLFormElement>('add-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    await vi.waitFor(() => expect(get('add-status').textContent).toContain('没有解析到可添加的选集'));
+    await vi.waitFor(() => expect(get('add-status').textContent).toContain('未找到可添加的分集'));
     expect(get('add-preview').children).toHaveLength(0);
     expect(get('works').querySelectorAll('.playback-work-open')).toHaveLength(originalCount);
 
@@ -298,7 +366,7 @@ describe('playback panel', () => {
         command,
         resolveSource: vi.fn(async () => ({ title: '作品', kind: 'single' as const, entries: [] })),
       };
-      const panel = createPlaybackPanel(document, client, vi.fn());
+      const panel = createPlaybackPanel(document, client);
       return { panel, command };
     };
     const normal = makePanel('normal');
@@ -328,7 +396,7 @@ describe('playback panel', () => {
     expect(get('add-status').textContent).toContain('请输入 B 站');
     get('add-cancel').click();
     get<HTMLInputElement>('interval').value = '0'; get('interval').dispatchEvent(new Event('input')); get('save').click();
-    expect(get('feedback').textContent).toContain('大于零');
+    expect(get('feedback').textContent).toContain('大于 0');
     expect(command).not.toHaveBeenCalled(); expect(onChange).not.toHaveBeenCalled();
     panel.destroy();
   });

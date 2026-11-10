@@ -22,7 +22,7 @@ describe('createNoticeManager', () => {
     manager.setSearching(true);
     manager.setSearching(true);
     expect(root.querySelectorAll('[data-favorite-searching]')).toHaveLength(1);
-    expect(root.textContent).toContain('正在搜索补位视频');
+    expect(root.textContent).toContain('正在寻找符合截止时间的视频');
     vi.advanceTimersByTime(30_000);
     expect(root.children).toHaveLength(1);
     manager.setSearching(false);

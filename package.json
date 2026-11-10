@@ -1,9 +1,9 @@
 {
   "name": "bilibili-time-machine",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "license": "MIT",
-  "description": "按时间过滤 B 站视频、评论和 XML 弹幕，支持收藏偏好补位、动画片单连播与可跳过的公益广告分段续播。",
+  "description": "按截止时间筛选 B 站视频和评论，用收藏偏好补充首页。支持动画连播和可跳过的公益广告。",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -175,7 +175,7 @@ describe('真实播放器与会话的起播接线', () => {
     vi.mocked(video.play).mockClear(); set({ readyState: 4 }); emit('waiting'); emit('canplay');
     await vi.advanceTimersByTimeAsync(60_000);
     expect(video.play).not.toHaveBeenCalled();
-    expect(runtime.getState()).toMatchObject({ status: 'blocked', message: '点击继续播放' });
+    expect(runtime.getState()).toMatchObject({ status: 'blocked', message: '继续播放' });
   });
 
   it.each(['pause', 'blocked', 'position-conflict'])('%s后点击继续重新定位保存目标并恢复计时', async reason => {

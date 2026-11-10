@@ -166,7 +166,7 @@ describe('B站片源解析', () => {
 
   it('报告 API 错误、HTTP 拒绝和空结果，不降级为单条视频', async () => {
     const apiError = vi.fn(async (_url: string): Promise<unknown> => ({ code: -404, message: 'not found' }));
-    await expect(resolvePlaybackSource('BV1xG411x7XD', apiError)).rejects.toThrow(/接口返回错误（-404）/);
+    await expect(resolvePlaybackSource('BV1xG411x7XD', apiError)).rejects.toThrow(/错误代码：-404/);
 
     const httpError = vi.fn(async (_url: string): Promise<unknown> => {
       throw new Error('HTTP 403');
@@ -174,9 +174,9 @@ describe('B站片源解析', () => {
     await expect(resolvePlaybackSource('BV1xG411x7XD', httpError)).rejects.toThrow('HTTP 403');
 
     const emptyVideo = vi.fn(async (_url: string): Promise<unknown> => videoResponse({ title: '空视频', pages: [] }));
-    await expect(resolvePlaybackSource('BV1xG411x7XD', emptyVideo)).rejects.toThrow('未包含有效分P');
+    await expect(resolvePlaybackSource('BV1xG411x7XD', emptyVideo)).rejects.toThrow('未找到可添加的分集');
 
     const emptySeason = vi.fn(async (_url: string): Promise<unknown> => seasonResponse({ title: '空番剧', episodes: [] }));
-    await expect(resolvePlaybackSource('ss123', emptySeason)).rejects.toThrow('没有有效正片分集');
+    await expect(resolvePlaybackSource('ss123', emptySeason)).rejects.toThrow('未找到可添加的正片分集');
   });
 });

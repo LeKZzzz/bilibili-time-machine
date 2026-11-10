@@ -422,12 +422,12 @@ describe('playback runtime', () => {
     const { storage } = storageFor('Chrome');
     const env = mount(data, storage, name, url);
     await flush();
-    expect(env.runtime.getState()).toMatchObject({ mode: 'normal', status: 'stopped', message: '整份片单均无法播放，请检查片源' });
+    expect(env.runtime.getState()).toMatchObject({ mode: 'normal', status: 'stopped', message: '片单中的视频暂时都无法播放，请检查网络及这些视频的访问权限后重试。' });
     expect(env.assign).not.toHaveBeenCalled();
     env.runtime.destroy(); await flush();
     const saved = await storage.get(PLAYBACK_STORAGE_KEY) as PlaybackData;
     const redirected = mount(saved, storage, '', url);
-    expect(redirected.runtime.getState().message).toBe('整份片单均无法播放，请检查片源');
+    expect(redirected.runtime.getState().message).toBe('片单中的视频暂时都无法播放，请检查网络及这些视频的访问权限后重试。');
     expect(redirected.runtime.getState().status).toBe('stopped');
     redirected.runtime.destroy();
     const ordinary = mount(data, undefined, '', url);

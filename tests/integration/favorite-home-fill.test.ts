@@ -229,7 +229,7 @@ describe('favorite home fill search lifecycle', () => {
     await controller.run();
     expect(searches).toEqual(['a', 'b', 'c']);
     expect(Array.from(document.querySelectorAll('[data-favorite-home-fill-label]')).map((node) => node.textContent))
-      .toEqual(['收藏标签补位：a', '收藏标签补位：b', '收藏标签补位：c']);
+      .toEqual(['来自收藏偏好：a', '来自收藏偏好：b', '来自收藏偏好：c']);
     expect(document.querySelector('[data-bvid="BVtemplate"]')).toBe(template);
   });
 
@@ -254,7 +254,7 @@ describe('favorite home fill search lifecycle', () => {
     await controller.run();
     expect(searches).toEqual(['b']);
     expect(Array.from(document.querySelectorAll('[data-favorite-home-fill-label]')).map((node) => node.textContent))
-      .toEqual(['收藏标签补位：a', '收藏标签补位：b']);
+      .toEqual(['来自收藏偏好：a', '来自收藏偏好：b']);
   });
 
   it('records only the last two used rounds and reuses the selected tag cache', async () => {
@@ -272,7 +272,7 @@ describe('favorite home fill search lifecycle', () => {
       const controller = createFavoriteHomeFillController({ root: document, rng: () => 0, store, fetch: request as typeof fetch, config });
       controllers.push(controller);
       await controller.run();
-      expect(document.querySelector('[data-favorite-home-fill-label]')?.textContent).toBe('收藏标签补位：a');
+      expect(document.querySelector('[data-favorite-home-fill-label]')?.textContent).toBe('来自收藏偏好：a');
       controller.disconnect();
     }
     expect(searches).toEqual(['a']);

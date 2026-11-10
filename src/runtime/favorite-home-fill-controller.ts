@@ -162,7 +162,7 @@ export function cloneHomeFillCard(template: Element, candidate: SearchCandidate,
   }
   const title = cleanSearchTitle(candidate.title) ?? bvid;
   const sourceTag = (candidate.sourceTag ?? candidate.tags[0] ?? '').trim();
-  const fillLabel = sourceTag ? `收藏标签补位：${sourceTag}` : '收藏标签补位';
+  const fillLabel = sourceTag ? `来自收藏偏好：${sourceTag}` : '来自收藏偏好';
   clone.setAttribute('aria-label', `${fillLabel}：${title}`);
   clone.querySelectorAll<HTMLElement>('[data-bvid]').forEach((node) => node.setAttribute('data-bvid', bvid));
   const videoLinks = Array.from(clone.querySelectorAll<HTMLAnchorElement>('a[href*="/video/"]'));
@@ -188,8 +188,8 @@ export function cloneHomeFillCard(template: Element, candidate: SearchCandidate,
   let marker = clone.querySelector<HTMLElement>('[data-favorite-home-fill-label]');
   if (!marker) { marker = documentRef.createElement('span'); marker.setAttribute('data-favorite-home-fill-label', '1'); marker.style.cssText = 'font-size:11px;color:#00aeec;'; clone.appendChild(marker); }
   marker.textContent = fillLabel;
-  marker.setAttribute('aria-label', sourceTag ? `根据收藏标签“${sourceTag}”添加的补位视频` : '收藏标签补位');
-  if (sourceTag) marker.title = `根据收藏标签“${sourceTag}”添加`;
+  marker.setAttribute('aria-label', sourceTag ? `根据你的收藏标签“${sourceTag}”推荐` : '来自收藏偏好');
+  if (sourceTag) marker.title = `根据你的收藏标签“${sourceTag}”推荐`;
   else marker.removeAttribute('title');
   clone.removeAttribute('hidden');
   return clone;

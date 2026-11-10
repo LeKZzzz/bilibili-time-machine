@@ -74,8 +74,7 @@ function assertApiSuccess(value: unknown, label: string): JsonRecord {
   const response = record(value);
   if (!response || response.code !== 0) {
     const code = response?.code;
-    const message = text(response?.message) || text(response?.msg);
-    throw new Error(`B站${label}接口返回错误（${String(code ?? '未知')}）${message ? `：${message}` : ''}`);
+    throw new Error(`未能获取${label}信息，请确认链接可以访问后重试（错误代码：${String(code ?? '未知')}）。`);
   }
   return response;
 }
@@ -120,13 +119,13 @@ async function resolveVideo(
     '视频',
   );
   const data = record(response.data);
-  if (!data) throw new Error('B站视频接口未返回视频数据');
+  if (!data) throw new Error('未能获取视频信息，请确认链接可以访问后重试。');
 
-  const title = requireTitle(data.title, 'B站视频接口未返回作品标题');
+  const title = requireTitle(data.title, '未能获取视频名称，请稍后重试，或填写名称后选择“仅添加此链接”。');
   const pages = Array.isArray(data.pages)
     ? data.pages.map(record).filter((page): page is JsonRecord => page !== null)
     : [];
-  if (!pages.length) throw new Error('B站视频详情未包含有效分P');
+  if (!pages.length) throw new Error('未找到可添加的分集。你也可以选择“仅添加此链接”。');
 
   const responseId = videoId(data.bvid)
     ?? (positiveInteger(data.aid) ? `av${positiveInteger(data.aid)}` : null);
@@ -142,7 +141,7 @@ async function resolveVideo(
       const url = `https://www.bilibili.com/video/${stableVideoId}/${number === 1 ? '' : `?p=${number}`}`;
       return canonicalEntry(`${stableVideoId}-p${number}`, partTitle, url);
     }));
-    if (!entries.length) throw new Error('B站视频分P中没有有效条目');
+    if (!entries.length) throw new Error('未找到可添加的分集。你也可以选择“仅添加此链接”。');
     return { title, kind: 'parts', entries };
   }
 
@@ -173,7 +172,7 @@ async function resolveVideo(
       }
     }
     const entries = uniqueEntries(collectionEntries);
-    if (!entries.length) throw new Error('B站合集没有有效分集');
+    if (!entries.length) throw new Error('未找到可添加的分集。你也可以选择“仅添加此链接”。');
     return {
       title: text(ugcSeason?.title) || title,
       kind: 'collection',
@@ -182,11 +181,11 @@ async function resolveVideo(
   }
 
   const page = pageRecords[0];
-  if (!page) throw new Error('B站视频详情未包含有效分P');
+  if (!page) throw new Error('未找到可添加的分集。你也可以选择“仅添加此链接”。');
   const pageTitle = text(page.page.part) || title;
   const url = `https://www.bilibili.com/video/${stableVideoId}/`;
   const entry = canonicalEntry(`${stableVideoId}-p${page.number}`, pageTitle, url);
-  if (!entry) throw new Error('B站视频没有有效播放条目');
+  if (!entry) throw new Error('未找到可添加的视频，请确认链接可以访问后重试。');
   return { title, kind: 'single', entries: [entry] };
 }
 
@@ -200,8 +199,8 @@ async function resolveSeason(
     '番剧',
   );
   const result = record(response.result);
-  if (!result) throw new Error('B站番剧接口未返回剧集数据');
-  const title = requireTitle(result.title, 'B站番剧接口未返回作品标题');
+  if (!result) throw new Error('未能获取番剧信息，请确认链接可以访问后重试。');
+  const title = requireTitle(result.title, '未能获取番剧名称，请确认链接可以访问后重试。');
   const episodes = Array.isArray(result.episodes) ? result.episodes : [];
   const entries = uniqueEntries(episodes.map(value => {
     const episode = record(value);
@@ -210,7 +209,7 @@ async function resolveSeason(
     const episodeTitle = text(episode.long_title) || text(episode.title);
     return canonicalEntry(`ep${episodeId}`, episodeTitle, `https://www.bilibili.com/bangumi/play/ep${episodeId}`);
   }));
-  if (!entries.length) throw new Error('B站番剧没有有效正片分集');
+  if (!entries.length) throw new Error('未找到可添加的正片分集，请确认番剧链接可以访问后重试。');
   return { title, kind: 'season', entries };
 }
 

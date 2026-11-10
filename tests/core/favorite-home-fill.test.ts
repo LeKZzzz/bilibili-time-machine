@@ -313,8 +313,8 @@ describe('favorite home fill core', () => {
     expect(clone?.querySelector('a')?.textContent).toBe('new');
     expect(clone?.querySelector('.owner')?.getAttribute('href')).toBeNull();
     expect(clone?.querySelector('.owner')?.textContent).toBe('');
-    expect(clone?.textContent).toContain('收藏标签补位：x');
-    expect(clone?.querySelector('[data-favorite-home-fill-label]')?.getAttribute('aria-label')).toBe('根据收藏标签“x”添加的补位视频');
+    expect(clone?.textContent).toContain('来自收藏偏好：x');
+    expect(clone?.querySelector('[data-favorite-home-fill-label]')?.getAttribute('aria-label')).toBe('根据你的收藏标签“x”推荐');
   });
 
   it('replaces picture sources and native card metadata with the candidate', async () => {

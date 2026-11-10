@@ -1,8 +1,8 @@
 # Bilibili Time Machine
 
-**Browse Bilibili with a date in the past, or turn childhood cartoons into a looping channel.**
+**Browse Bilibili as of a date in the past, or watch your favorite cartoons back to back.**
 
-Bilibili Time Machine combines time filtering, animation playlists, and optional public-service ad breaks. Browse videos and comments from before a chosen date, or build a playlist of your favorite cartoons to alternate between shows or watch in order, with occasional public-service clips. It keeps Bilibili's native pages and player and is available as a Chrome extension or Tampermonkey userscript.
+Bilibili Time Machine filters videos and comments by a cutoff date and plays animated shows from your own playlist. It keeps Bilibili's native pages and player and is available as a Chrome extension or Tampermonkey userscript.
 
 [简体中文](README.md) · [Download extension](https://github.com/LeKZzzz/bilibili-time-machine/releases) · [Install userscript](https://greasyfork.org/en/scripts/601594) · [Report an issue](https://github.com/LeKZzzz/bilibili-time-machine/issues)
 
@@ -11,28 +11,32 @@ Bilibili Time Machine combines time filtering, animation playlists, and optional
 | What you want | How it works |
 | --- | --- |
 | See only content from before a chosen date | Set a cutoff to filter video cards, loaded comments, and XML danmaku; optionally let the cutoff advance with time |
-| Watch cartoons like a TV channel | Arrange shows and episodes in the Childhood Screening Room, alternate between shows or finish one at a time, and resume saved progress |
+| Watch cartoons like a TV channel | Arrange shows and episodes in Animation Time Machine, alternate between shows or finish one at a time, and resume later |
 | Add public-service ad breaks | Choose clips and an interval; animation can pause mid-episode, while ordinary viewing waits until the video ends. Ads are always skippable |
 | Leave fewer gaps on the filtered homepage | Use tags from your favorite folders to find videos before the cutoff, filling empty slots without replacing visible content |
 
-**Time filtering and playback are independent.** Animation does not require a cutoff or an enabled filter. With filtering enabled, the current animation entry is exempt, while recommendations and comments keep their existing filtering rules.
+**Time filtering and playback are independent.** Watching animation does not require a cutoff or an enabled filter. With filtering enabled, the animation you are watching can still play, while recommendations and comments keep their existing filtering rules.
+
+Animation playback includes a public-service ad break after every **20 minutes** of accumulated viewing by default. You can skip it at any time, or turn off “动画中途插播” (Mid-episode animation ads) and save settings.
 
 The tool uses content still available on Bilibili. It cannot restore historical homepages, deleted videos, or past recommendation rankings, and does not bypass membership or regional restrictions.
 
-[Installation](#installation) · [Watch animation](#watch-animation-childhood-screening-room) · [Ad breaks](#configure-public-service-ads) · [Browse by date](#browse-with-a-date-in-the-past) · [Troubleshooting](#troubleshooting-and-limitations) · [Contributing](#contributing)
+[Installation](#installation) · [Watch animation](#watch-animation) · [Ad breaks](#configure-public-service-ads) · [Browse by date](#browse-with-a-date-in-the-past) · [Troubleshooting](#troubleshooting-and-limitations) · [Contributing](#contributing)
+
+> Version scope: this guide describes `v0.4.0`. For an older version, follow its [Release notes](https://github.com/LeKZzzz/bilibili-time-machine/releases). See [Version and compatibility](#version-and-compatibility) for tested and untested scenarios.
 
 <details>
-<summary>Preview: time filtering, Childhood Screening Room, and favorite preferences</summary>
+<summary>Preview: time filtering, Animation Time Machine, and favorites</summary>
 
-| Time filtering | Childhood Screening Room |
+| Time filtering | Animation Time Machine |
 | --- | --- |
-| <img src="assets/screenshots/panel.png" width="320" alt="Current time-filter panel with the animation channel entry"> | <img src="assets/screenshots/playback.png" width="320" alt="Childhood Screening Room: custom playlists, playback order, and ad settings"> |
+| <img src="assets/screenshots/panel.png" width="320" alt="Time-filtering tab: date, time, and favorites settings, with an Animation Time Machine tab at the top"> | <img src="assets/screenshots/playback.png" width="320" alt="Animation Time Machine: playlist, playback order, and public-service ad settings"> |
 
 | Favorite folders | Interest tags |
 | --- | --- |
 | <img src="assets/screenshots/folders.png" width="320" alt="Favorite folder sources, reading limits, and save controls"> | <img src="assets/screenshots/tags.png" width="320" alt="Interest tags extracted from sample favorites"> |
 
-Screenshots use the actual `v0.3.0` UI components with demo data, not personal favorites. The sample shows illustrate the playlist and can be replaced with your own choices.
+Screenshots use the `v0.4.0` UI with demo data, not personal favorites. The sample shows illustrate the playlist and can be replaced with your own choices.
 
 </details>
 
@@ -56,19 +60,22 @@ To update, load the new directory, confirm the extension version, and refresh Bi
 
 **Animation and ad features require `v0.3.0` or later.** Greasy Fork and GitHub are published separately, so their versions may differ. If Greasy Fork has not been updated yet, download `bilibili-time-machine.user.js` from a GitHub Release and import it into Tampermonkey. The extracted `bilibili-time-machine-userscript-vX.Y.Z.zip` contains the same script.
 
-## Watch animation: Childhood Screening Room
+## Watch animation
 
-> Development status (2026-11-01): the 31-show catalog, link import and automatic expansion, separate dialogs, 60-second resumable ad segments, live order changes, current-page-first resume, and automatic follow-through after manual episode selection are unreleased `dev` changes. Published `v0.3.0` assets do not include them. The local package version is still `0.3.0`, so the version number alone does not show whether these changes are installed.
+Open **“时光机” (Time Machine)** and select the **“动画时光机” (Animation Time Machine)** tab at the top. The adjacent **“截止时间过滤” (Time filtering)** tab switches back to date settings. The interface is in Chinese; the instructions below include the actual control labels.
 
-Open **“时光机” (Time Machine) → “动画时光机” (Animation Time Machine) → “打开频道” (Open channel)**. The interface is in Chinese; the instructions below include the actual control labels.
-
-1. Try the built-in playlist, or click “添加作品” (Add show) and paste a Bilibili video or bangumi `ep` / `ss` link in the dialog. Preview its parts, video collection, or regular season episodes, select entries, and add them to your draft playlist; manually adding a specific link is also supported. The main panel only shows each show's name and episode count. Click a show to open a separate episode-details dialog, where you can view, add, or remove entries.
+1. Try the built-in playlist, or click “添加作品” (Add show), paste a Bilibili video or bangumi link, and click “获取分集” (Find episodes). Select the episodes you want and confirm. To add just one video, you can enter its name and link and add it directly.
 2. Choose “轮播 · 每部各播一集” (Round-robin: one episode per show) or “顺播 · 看完一部再下一部” (Sequential: finish one show first). Click “保存设置” (Save settings), then “从头播放” (Start from the beginning).
-3. Click “暂停” (Pause) for a break, or “退出连播” (Exit continuous playback) to end the session and retain progress. Next time, open the channel and click “继续观看” (Resume).
+3. Click “暂停” (Pause) for a break, or “退出连播” (Exit continuous playback) to end the session and retain progress. Next time, open the Animation Time Machine tab and click “继续观看” (Resume).
 
-Resume prioritizes the current page: if the animation or episode you opened manually is in the playlist, playback continues from that episode and its current viewing position, then follows the playlist order. A page outside the playlist restores saved progress instead. A saved episode that has not started playing keeps its saved position; a newly selected episode that has not loaded starts at zero. “从头播放” (Play from beginning) always starts the first playlist entry at zero.
+Click a show to view its episodes or use “添加分集” (Add episodes) to add more. Each show needs at least one episode. Click “保存设置” (Save settings) after adding or removing content.
 
-The default playlist contains **31 animated shows**, including Chinese classics, adventure series, and international favorites such as Digimon, The Smurfs, and The Little Mole. Opening the channel automatically expands untouched built-in shows from 74 seed entries using the same resolver and saves the results. Episode counts depend on the source and do not guarantee complete series. You can cancel expansion; failures retain existing entries. Edited or deleted shows are not restored, and updated defaults do not replace your saved playlist. A long video without parts or a collection remains one entry; it is not split automatically.
+“继续观看” (Resume) continues from the episode and viewing position on the current page if that episode is in your playlist. Otherwise, it restores your saved progress. “从头播放” (Start from the beginning) starts the first episode in the playlist from the beginning.
+
+The default playlist contains **31 animated shows**, including Chinese classics and international favorites such as Digimon, The Smurfs, and The Little Mole. Episode counts depend on the available sources; complete series are not guaranteed.
+
+<details>
+<summary>Playback order, resume, and episode management</summary>
 
 For a show A with two episodes and a show B with three:
 
@@ -77,76 +84,104 @@ For a show A with two episodes and a show B with three:
 | Round-robin | A1 → B1 → A2 → B2 → B3 → A1 in the next round |
 | Sequential | A1 → A2 → B1 → B2 → B3 → A1 in the next round |
 
-The playlist loops after every entry has played. Each show needs at least one entry. **You can switch between round-robin and sequential order during playback and save.** The current episode continues without resetting its position or the ad timer; playback then follows the entry after it in the new order. Saving an order change while paused or during an ad does not resume playback or skip the ad. Exit continuous playback before adding or removing shows or episodes, and save your changes. Reloading, reopening the browser, or opening a new tab does not start animation automatically; choose Resume yourself. **During continuous playback, manually selecting another playlist entry automatically continues the session from that entry**, including same-page episode changes and full-page navigation in the current window. You do not need to click Resume again. Selecting a video outside the playlist ends the session without pulling you back; explicitly exiting does not restart it automatically.
+The playlist loops after every episode has played. You can switch between round-robin and sequential order during playback and save. The current episode continues without resetting its position or the ad timer; the next episode follows the new order. Saving an order change while paused or during an ad does not resume playback or skip the ad. Exit continuous playback before adding or removing shows or episodes.
 
-> Mid-episode animation ads are on by default, with a 20-minute interval. For uninterrupted animation, turn off “动画中途插播” (Animation mid-roll ads) and save settings.
+After reloading, reopening the browser, or opening a new tab, click “继续观看” (Resume) to continue. A saved episode that has not started playing keeps its saved position; a newly selected episode that has not loaded starts from the beginning.
+
+During continuous playback, manually selecting another episode in your playlist continues the session from that episode and position. This works for same-page changes and navigation within the current window, without clicking Resume again. Selecting a video outside your playlist ends the session. Explicitly exiting does not restart it automatically.
+
+When adding a show or episodes, you can find parts of a video, videos in a collection, or regular episodes from a bangumi `ep` / `ss` link, then preview and select what to add. A long video without parts or an episode list is added as one video; it is not split automatically.
+
+Opening Animation Time Machine attempts to complete the episode lists of untouched built-in shows and saves the results. You can cancel; failures keep existing episodes. Shows you have edited or deleted are not restored, and new defaults do not replace your saved playlist.
+
+</details>
 
 ## Configure public-service ads
 
-Manage ad links, switches, and the interval in “童年放映室” (Childhood Screening Room). The default list includes **22 public-service ads**: CCTV and other Chinese classics, plus clips from Thailand, the UK, Brazil, Australia, South Korea, and WWF. Topics include family care, honesty, courtesy, the environment, road and water safety, smoking prevention, and bullying prevention. You can add or remove entries.
+Manage your ad playlist, switches, and interval in the “动画时光机” (Animation Time Machine) tab. The default list includes **22 public-service ads**, which you can add to or remove.
 
-Shows, episodes, and ads share an add dialog instead of inline forms. Adding an ad keeps only the specified link; it does not expand its collection. Confirmed additions and removals remain draft changes until you click “保存设置” (Save settings) in the main panel. Canceling an unconfirmed addition leaves the playlist unchanged.
+Click “添加公益广告” (Add public-service ad), enter a link and an optional name, confirm, then click “保存设置” (Save settings). Only that video is added, not its entire collection. Canceling leaves the playlist unchanged.
 
 | Setting | Default | When an ad plays | After it ends or is skipped |
 | --- | --- | --- | --- |
 | “动画中途插播” (Animation mid-roll ads) | On | Pauses the current animation when accumulated viewing reaches the interval | Resumes the animation from its paused position |
 | “普通观看片尾插播” (Ordinary-viewing end-of-video ads) | Off | Waits until the current video ends after the interval is reached | Returns control to Bilibili's native autoplay; a pause-at-end setting stays paused |
 
-Ads appear over the current player with the surroundings dimmed. **“跳过广告” (Skip ad) works during both loading and playback.** If an ad fails to load, its overlay is removed without immediately inserting another.
+**“跳过广告” (Skip ad) works during both loading and playback.** Each break plays for at most 60 seconds before returning to your video. An unfinished ad continues from the same position at the next ad break.
 
-**Each ad break plays at most 60 seconds**, excluding pauses, buffering, and seeking. An unfinished ad returns you to the main video and resumes from the same position at the next eligible ad break; rotation continues only after it finishes. Skipping or exiting also preserves the captured ad position. Reloading does not immediately reopen the ad.
+<details>
+<summary>Ad content, break duration, and viewing timers</summary>
+
+The built-in list includes CCTV and other Chinese classics, plus clips from Thailand, the UK, Brazil, Australia, South Korea, and WWF. Topics include family care, honesty, courtesy, the environment, road and water safety, smoking prevention, and bullying prevention.
+
+Ads appear over the current player with the surroundings dimmed. If an ad fails to load, it closes without immediately playing another.
+
+Each ad break plays at most 60 seconds, excluding pauses, buffering, and seeking. An unfinished ad returns you to the main video and continues from the same position at the next eligible break. The next ad is chosen only after the current one finishes. Skipping or exiting also keeps the saved ad position. Reloading does not immediately reopen the ad.
 
 Both modes share the ad list and interval but track viewing time separately. The default is **20 minutes of actual playback**. Pauses, buffering, seeks, and the ads themselves do not count; faster playback does not accelerate the timer. Ordinary viewing never interrupts a video mid-play and does not accumulate a backlog of ads.
 
+</details>
+
 ## Browse with a date in the past
 
-Open “时光机” (Time Machine), enter a date and time in your **local time zone**, click “应用时间” (Apply time) or press Enter, then click “开启过滤” (Enable filtering).
+Open “时光机” (Time Machine), select the **“截止时间过滤” (Time filtering)** tab, enter a date and time in your local time zone, click “应用时间” (Apply time) or press Enter, then click “开启过滤” (Enable filtering).
 
 A cutoff of `2020-01-01 00:00:00`, for example, shows only content timestamped **strictly before** that moment. Videos use their publication time; comments and danmaku use their posting time. Content at or after the cutoff, or with an unverifiable timestamp, is hidden.
 
 - Apply date and time edits before they take effect. “取消” (Cancel) restores the applied value.
 - “现在” (Now) fills the current date and time. “填入当前时间” (Fill current time) changes only hours, minutes, and seconds, keeping the date.
 - Automatic advancement moves the cutoff by elapsed whole minutes, continues after a refresh, and does not overwrite an edit in progress.
-- To restore the full page, click “暂停过滤” (Pause filtering) and refresh so previously filtered response data can be loaded again.
+- To restore the full page, click “暂停过滤” (Pause filtering), then refresh the page.
 
-Time filtering covers the homepage, video pages, categories, search, profile video lists, and the activity feed on `www.bilibili.com`, `search.bilibili.com`, `space.bilibili.com`, and `t.bilibili.com`. If fewer than half a page of search results remain visible, it fetches up to two more pages, deduplicates results, and restores the original page number and URL. Bangumi playback support does not imply complete time-filtering support for bangumi pages.
+Time filtering supports the homepage, video pages, categories, search, profile video lists, and the activity feed. Bangumi can be added to your playlist, but time filtering on bangumi pages is not fully supported.
 
 ### Fill homepage gaps from your favorites
 
-This feature is off by default and requires your current Bilibili account to have access to its favorite folders.
+This feature is off by default. Sign in to Bilibili with an account that can access its own favorites folders before enabling it.
 
-1. Enable “收藏偏好补充首页” (Fill homepage using favorite preferences), choose sources in “选择收藏夹” (Select favorite folders), and save.
+1. Enable “收藏偏好补充首页” (Fill homepage from favorites), choose sources in “选择收藏夹” (Select favorites folders), and save.
 2. Return to the homepage. If gaps remain, click “继续寻找” (Keep looking), or scroll down and stop to start another round.
-3. After changing saved videos, click “更新收藏偏好” (Update favorite preferences). Use “查看兴趣标签” (View interest tags) to inspect the results. “同步收藏夹名称” (Sync folder names) updates only the folder list, not video tags.
+3. After changing saved videos, click “更新收藏偏好” (Update preferences). Use “查看兴趣标签” (View interest tags) to see the tags taken from your saved videos. “刷新收藏夹列表” (Refresh folder list) updates the available folders, not the interest tags.
 
-The default is **up to 3 folders, reading 50 videos per folder**, adjustable in settings. Candidates are randomly selected using tag preferences and deduplicated, with at most 5 searches per round. If no suitable video is found, the gap remains; the cutoff is never relaxed.
+The default is **up to 3 folders, reading 50 videos per folder**, adjustable in settings. Videos are found using your interest tags and must meet the cutoff. They fill empty slots without replacing visible videos. If no suitable video is found, the gap remains.
 
 ## Troubleshooting and limitations
 
 | Problem | Explanation or action |
 | --- | --- |
 | No entry point, or the old interface remains after an update | Check the installed version, enabled state, and supported page. Refresh Bilibili after reloading the extension. Do not enable the userscript and extension together |
-| Animation does not start automatically | Follow the panel prompt and click “点击继续播放” (Click to continue playing); the browser may block autoplay. After a reload or reopening, use “继续观看” (Resume) |
-| A built-in show reports a parsing failure | Existing entries remain usable. The failure is saved, so opening the channel does not repeatedly retry. Open the show's details, add episodes, parse the link again, select the entries you need, and save |
-| A bangumi entry is skipped | Explicit preview-only, inaccessible, or unavailable entries are skipped. Playback stops if the entire playlist is unavailable. Member-only content still requires the appropriate account access |
-| Homepage gaps remain | Enable filtering and filling on the homepage and select favorite folders. A gap remains when no candidate meets the cutoff and deduplication rules |
-| Content is hidden because its time cannot be verified | Try adjusting the extra-request budget in advanced settings. Content with an unknown timestamp is not allowed through |
+| Animation does not start automatically | The browser may be blocking autoplay. Follow the prompt and click “继续播放” (Continue playback). After a reload or reopening, use “继续观看” (Resume) to restore progress |
+| Episodes could not be found for a built-in show | Existing episodes remain available. Open the show, choose “添加分集” (Add episodes), find and select the episodes you need, then confirm and save settings |
+| A bangumi episode is skipped | Preview-only, inaccessible, or unavailable episodes are skipped. Playback stops if the entire playlist is unavailable. Member-only content still requires the appropriate account access |
+| Homepage gaps remain | Enable time filtering and “收藏偏好补充首页” (Fill homepage from favorites) on the homepage, and select folders. A gap remains when no new video meets the cutoff |
+| Content is hidden because its time cannot be verified | Try increasing “发布时间查询上限” (Publication-time lookup limit) in advanced settings, then refresh the page. Content whose time still cannot be verified stays hidden |
 | Progress differs after exiting or changing installation methods | Exiting saves progress, but the extension and userscript do not share storage. Forcibly closing the browser may lose the last unsaved seconds |
 
 Comments are filtered only when loaded; the tool does not fetch the full comment history. Danmaku filtering currently supports XML, not protobuf segments. Changes to Bilibili pages and players can affect compatibility; site-wide coverage is not guaranteed.
 
-Fullscreen is not guaranteed to survive episode changes that navigate between pages. Real Chrome extension regression testing has covered automatic transitions, resume, and ad recovery with a member-only sample. Some Tampermonkey combinations, native fullscreen on member content, and continuous buffering still need verification; these results do not guarantee every source will work.
+Changing episodes across pages may exit fullscreen. Compatibility can vary by browser, installation method, and source. When reporting an issue, include your installation method, browser version, and steps to reproduce it. See [Version and compatibility](#version-and-compatibility) for tested and untested scenarios.
+
+<details>
+<summary>Supported pages and recommendation rules</summary>
+
+Time filtering runs on `www.bilibili.com`, `search.bilibili.com`, `space.bilibili.com`, and `t.bilibili.com`. If fewer than half a page of search results remain after filtering, it fetches up to two more pages, removes duplicates, and keeps the original page number and URL.
+
+Homepage suggestions are randomly selected using interest tags and deduplicated, with at most 5 searches per round. If no suitable video is found, the gap remains; the cutoff is never relaxed.
+
+When episodes cannot be found for a built-in show, existing results are kept instead of retrying every time you open it. Use “添加分集” (Add episodes) to try again.
+
+</details>
 
 ## Data storage and privacy
 
-Playback settings, playlists, and resume progress are stored locally for the current installation method and do not automatically sync between the extension and userscript. Favorite preferences are separated by Bilibili account. Favorite content is not read and tag searches are not started when filling is disabled or no folders are selected.
+Playback settings, playlists, and resume progress are stored locally for the current installation method and do not automatically sync between the extension and userscript. Preferences from your favorites are kept separate by Bilibili account. When “收藏偏好补充首页” (Fill homepage from favorites) is off or no folders are selected, saved videos are not read and interest-tag searches do not run.
 
 <details>
 <summary>Storage, cache, and diagnostic details</summary>
 
 - The userscript uses GM storage; the extension uses `chrome.storage.local`. Playback and filtering settings are stored separately.
-- Folder names use the site's `localStorage`; tags, candidates, and filling history use `IndexedDB`. Pages on the same origin can reuse them, but different Bilibili subdomains cannot. Without IndexedDB, these caches stay in the current page's memory.
-- Tag caches last 24 hours and hold up to 100 scored tags; search candidates last 7 days with up to 500 entries; filling history lasts 30 days with up to 1,000 entries. All are separated by account. Expiring caches mean deduplication is not permanent.
+- Folder names use the site's `localStorage`; interest tags, suggested videos, and recommendation history use `IndexedDB`. Pages on the same origin can reuse them, but different Bilibili subdomains cannot. Without IndexedDB, these caches stay in the current page's memory.
+- Interest tags are cached for 24 hours, up to 100 tags; videos awaiting recommendation for 7 days, up to 500 videos; recommendation history for 30 days, up to 1,000 records. All are separated by account. Expiring caches mean deduplication is not permanent.
 - Additional requests to verify video timestamps default to at most 20 videos per page or route, configurable from 0–100, with up to 3 concurrent requests. Favorite sources can be set to 1–10 folders and 1–200 videos per folder.
 - Development builds write sanitized logs only to the current browser console; they do not upload them. Logs exclude response bodies, comment text, cookies, and full URLs. Production builds omit project diagnostic logs.
 
@@ -156,13 +191,25 @@ Playback settings, playlists, and resume progress are stored locally for the cur
 
 Report problems through [GitHub Issues](https://github.com/LeKZzzz/bilibili-time-machine/issues), including the installed version, installation method, browser version, page type, and reproduction steps. Do not share cookies, credentials, or personal account data.
 
+### Version and compatibility
+
+<details>
+<summary>v0.4.0 changes and compatibility checks (2026-11-10)</summary>
+
+`v0.4.0` includes top-level tabs, revised copy and button layouts, the 31-show catalog, episode import and automatic completion, separate dialogs, resumable 60-second ad breaks, order changes during playback, resuming from the current page, and automatic continuation after manual episode changes. Reload the extension after updating it, then refresh Bilibili. Refresh Bilibili after updating the userscript as well.
+
+Testing with the installed Chrome extension has covered automatic episode changes, resuming saved progress, and returning from ads with member-only content. Some Tampermonkey combinations, native fullscreen on member content, and continuous buffering still need verification. Existing results do not guarantee that every source will work.
+
+</details>
+
 ### Build from source
 
-You need **Node.js 22**, npm, and Git:
+You need **Node.js 22**, npm, and Git. The commands below build the development version described in this guide from `dev`. To build a published version, use its Release tag instead.
 
 ```sh
 git clone https://github.com/LeKZzzz/bilibili-time-machine.git
 cd bilibili-time-machine
+git switch dev
 npm ci
 npm run build
 ```

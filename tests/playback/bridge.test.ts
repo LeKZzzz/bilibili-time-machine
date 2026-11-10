@@ -119,6 +119,13 @@ describe('playback bridge', () => {
     expect(pendingFetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
   });
 
+  it('网络异常使用中文提示，不展示浏览器原始错误', async () => {
+    const env = bridgeWindow();
+    const fetcher = vi.fn(async () => { throw new TypeError('Failed to fetch'); });
+    const client = createPlaybackBridgeClient(env.target, storage(), fetcher as unknown as typeof fetch);
+    await expect(client.resolveSource('BV1Ex411q7SJ')).rejects.toThrow('暂时无法获取视频信息，请检查网络后重试。');
+  });
+
   it('relays successful source resolution from the host runtime through the client RPC', async () => {
     const env = bridgeWindow();
     const fetcher = vi.fn(async () => videoApiResponse());
@@ -142,8 +149,8 @@ describe('playback bridge', () => {
     const runtime = vi.mocked(createPlaybackRuntime).mock.results[0].value;
     const result = runtime.resolveSource('BV1Ex411q7SJ');
     await flush();
-    await expect(result).rejects.toThrow('B站视频接口返回错误（-403）：无权访问');
-    expect(env.messages).toContainEqual(expect.objectContaining({ type: 'source-result', error: 'B站视频接口返回错误（-403）：无权访问' }));
+    await expect(result).rejects.toThrow('未能获取视频信息，请确认链接可以访问后重试（错误代码：-403）。');
+    expect(env.messages).toContainEqual(expect.objectContaining({ type: 'source-result', error: '未能获取视频信息，请确认链接可以访问后重试（错误代码：-403）。' }));
   });
 
   it('times out a host source RPC when the isolated client does not respond', async () => {
@@ -152,7 +159,7 @@ describe('playback bridge', () => {
     env.emit({ channel: CHANNEL, type: 'init', data: createDefaultPlaybackData() });
     await flush();
     const runtime = vi.mocked(createPlaybackRuntime).mock.results[0].value;
-    const result = expect(runtime.resolveSource('BV1Ex411q7SJ')).rejects.toThrow('片源解析等待超时');
+    const result = expect(runtime.resolveSource('BV1Ex411q7SJ')).rejects.toThrow('获取视频信息超时');
     await flush();
     expect(env.messages).toContainEqual(expect.objectContaining({ type: 'resolve-source', url: 'BV1Ex411q7SJ' }));
     await vi.advanceTimersByTimeAsync(15_000);
@@ -163,7 +170,7 @@ describe('playback bridge', () => {
     const env = bridgeWindow();
     const client = createPlaybackBridgeClient(env.target, { async get() { return undefined; }, async set() {}, async remove() {} });
     await flush();
-    const state = { ...client.getState(), status: 'stopped', message: '整份片单均无法播放，请检查片源' };
+    const state = { ...client.getState(), status: 'stopped', message: '片单中的视频暂时都无法播放，请检查网络及这些视频的访问权限后重试。' };
     env.emit({ channel: CHANNEL, type: 'state', state });
     env.emit({ channel: CHANNEL, type: 'state', state });
     await flush();
@@ -199,7 +206,7 @@ describe('playback bridge', () => {
   it('relays failed storage writes to the host instead of acknowledging successful playback', async () => {
     const env = bridgeWindow(); installPlaybackBridgeHost(env.target);
     const client = createPlaybackBridgeClient(env.target, { async get() { return undefined; }, async set() { throw new Error('disk full'); }, async remove() {} });
-    await flush(); const failed = expect(client.command({ type: 'start' })).rejects.toThrow('保存失败'); await flush(); await failed;
+    await flush(); const failed = expect(client.command({ type: 'start' })).rejects.toThrow('操作未完成，请重试。'); await flush(); await failed;
     expect(client.getState()).toMatchObject({ status: 'blocked', message: '保存失败' });
     expect(env.messages).toContainEqual(expect.objectContaining({ type: 'saved', error: true }));
   });
@@ -218,7 +225,7 @@ describe('playback bridge', () => {
     const env = bridgeWindow();
     const client = createPlaybackBridgeClient(env.target, { async get() { throw new Error('unavailable'); }, async set() {}, async remove() {} });
     await flush();
-    expect(client.getState().message).toContain('读取失败');
+    expect(client.getState().message).toBe('无法读取播放设置，请刷新页面后重试。');
     expect(env.messages.some(message => message.type === 'init')).toBe(false);
   });
 

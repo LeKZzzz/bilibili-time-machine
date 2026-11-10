@@ -31,7 +31,7 @@ export function createAdvertisementOverlay(options: {
     button{font:600 14px sans-serif;min-height:44px;padding:10px 16px;border:2px solid white;border-radius:8px;background:#17212e;color:white;cursor:pointer}
     button:focus-visible{outline:3px solid #ffd35c;outline-offset:3px}.resume[hidden]{display:none}
     .loading{position:absolute;left:12px;bottom:12px;background:#17212e;padding:8px;font:14px sans-serif}
-  </style><div class="loading" role="status">正在加载公益广告，可随时跳过</div><div class="controls"><button class="skip" type="button">跳过广告</button><button class="resume" type="button" hidden>点击继续播放</button></div>`;
+  </style><div class="loading" role="status">正在加载公益广告，可随时跳过</div><div class="controls"><button class="skip" type="button">跳过广告</button><button class="resume" type="button" hidden>继续播放</button></div>`;
   const skip = root.querySelector<HTMLButtonElement>('.skip')!;
   const resume = root.querySelector<HTMLButtonElement>('.resume')!;
   const controls = root.querySelector<HTMLElement>('.controls')!;

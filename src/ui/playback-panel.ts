@@ -7,7 +7,6 @@ export type PlaybackPanelCommand = { type: 'save-config'; config: PlaybackConfig
 
 export interface PlaybackPanelHandle {
   element: HTMLElement;
-  back: HTMLButtonElement;
   open(): void;
   destroy(): void;
 }
@@ -21,38 +20,37 @@ export interface PlaybackPanelClient {
 
 const STATUS: Record<PlaybackState['status'], string> = {
   idle: '等待开始', loading: '正在加载', playing: '播放中', paused: '已暂停', waiting: '等待播放器',
-  'waiting-end': '到点了，等待片尾', ad: '公益广告插播中', blocked: '点击继续播放', stopped: '已停止',
+  'waiting-end': '已达到广告间隔，等待当前视频结束', ad: '公益广告插播中', blocked: '请点击“继续播放”', stopped: '已停止',
 };
 
-export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, onBack: () => void): PlaybackPanelHandle {
+export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient): PlaybackPanelHandle {
   const element = doc.createElement('section');
   element.id = 'playback-dialog';
   element.className = 'panel-view playback-view';
   element.hidden = true;
   element.setAttribute('aria-label', '动画时光机与公益广告');
   element.innerHTML = `
-    <header class="tag-dialog-title"><div><div class="brand">童年放映室</div><div class="subtitle">独立播放 · 无需设置截止时间</div></div><button id="playback-back" class="ui-btn ui-btn-ghost ui-btn-sm" type="button">返回</button></header>
     <div class="dialog-body">
       <div class="playback-now"><strong id="playback-status" role="status"></strong><div id="playback-current"></div><div id="playback-next" class="description"></div><div id="playback-clock" class="description"></div><div id="playback-message" role="status" aria-live="polite"></div></div>
-      <section class="section"><div class="section-label">穿插一点公益广告</div>
+      <section class="section"><div class="section-label">公益广告设置</div>
         <label class="row"><span>动画中途插播</span><input id="playback-animation-ads" class="ui-toggle ui-toggle-primary ui-toggle-sm" type="checkbox"></label>
         <label class="row"><span>普通观看片尾插播</span><input id="playback-normal-ads" class="ui-toggle ui-toggle-primary ui-toggle-sm" type="checkbox"></label>
-        <label class="row" for="playback-interval">每累计播放（分钟）<input id="playback-interval" class="ui-input ui-input-sm" type="number" min="0" step="any" required></label>
-        <p class="description">只计算正片实际播放时间，两种模式分别计时。每次广告最多播放 60 秒，未播完的广告下次接着播；加载时也可立即跳过。</p>
+        <label class="row" for="playback-interval">广告间隔（分钟）<input id="playback-interval" class="ui-input ui-input-sm" type="number" min="0" step="any" required></label>
+        <p class="description">按正片实际观看时间计时，两种模式分别计算。每次广告最多播放 60 秒，未播完的下次继续。加载和播放时均可跳过。</p>
       </section>
-      <section class="section"><label class="section-label" for="playback-order">动画播放顺序</label><select id="playback-order"><option value="round-robin">轮播 · 每部各播一集</option><option value="sequential">顺播 · 看完一部再下一部</option></select><p class="description">整份片单播完后循环。播放中可切换顺序，保存后从下一集生效；增删作品或集数请先退出连播。</p>
+      <section class="section"><label class="section-label" for="playback-order">动画播放顺序</label><select id="playback-order"><option value="round-robin">轮播 · 每部各播一集</option><option value="sequential">顺播 · 看完一部再下一部</option></select><p class="description">片单播完后循环。播放中可切换顺序，保存后从下一集生效。增删作品或分集前，请先退出连播。</p>
         <div class="playback-catalog-status"><span id="playback-catalog-message" role="status" aria-live="polite"></span><button id="playback-cancel-catalog" class="ui-btn ui-btn-sm" type="button" hidden>取消自动补全</button></div>
-        <div id="playback-works" class="playback-list" tabindex="0" aria-label="动画作品与有序条目"></div>
-        <div class="playback-source-actions"><button id="playback-add-work" class="ui-btn ui-btn-sm" type="button">添加作品</button><span class="description">解析导入或手动添加作品与首集。</span></div>
+        <div id="playback-works" class="playback-list" tabindex="0" aria-label="动画作品列表"></div>
+        <div class="playback-source-actions"><button id="playback-add-work" class="ui-btn ui-btn-sm" type="button">添加作品</button><span class="description">粘贴链接导入分集，也可以手动添加。</span></div>
       </section>
-      <section class="section"><div class="section-label">公益广告片单</div><p class="description">随机遍历，每次一条。只有一条时允许重复。</p><div id="playback-ads" class="playback-list playback-ad-list" tabindex="0" aria-label="公益广告条目"></div><div class="playback-source-actions"><button id="playback-add-ad" class="ui-btn ui-btn-sm" type="button">添加公益广告</button></div></section>
+      <section class="section"><div class="section-label">公益广告片单</div><p class="description">随机播放，全部播完后重新开始。片单只有一条时会重复播放。</p><div id="playback-ads" class="playback-list playback-ad-list" tabindex="0" aria-label="公益广告列表"></div><div class="playback-source-actions"><button id="playback-add-ad" class="ui-btn ui-btn-sm" type="button">添加公益广告</button></div></section>
     </div>
-    <footer class="panel-footer playback-footer"><div id="playback-feedback" role="status" aria-live="polite"></div><div id="playback-ad-notice" class="description"></div><div class="playback-actions"><button id="playback-save" class="ui-btn ui-btn-sm" type="button">保存设置</button><button id="playback-start" class="ui-btn ui-btn-primary ui-btn-sm" type="button">从头播放</button><button id="playback-resume" class="ui-btn ui-btn-sm" type="button">继续观看</button><button id="playback-pause" class="ui-btn ui-btn-sm" type="button">暂停</button><button id="playback-continue" class="ui-btn ui-btn-primary ui-btn-sm" type="button">点击继续播放</button><button id="playback-skip-ad" class="ui-btn ui-btn-sm" type="button">跳过广告</button><button id="playback-exit" class="ui-btn ui-btn-sm" type="button">退出连播</button></div><div class="description">退出保留进度；重新打开后由你主动继续。</div></footer>
+    <footer class="panel-footer playback-footer"><div id="playback-feedback" role="status" aria-live="polite"></div><div id="playback-ad-notice" class="description"></div><div class="playback-actions"><button id="playback-save" class="ui-btn ui-btn-sm" type="button">保存设置</button><button id="playback-start" class="ui-btn ui-btn-primary ui-btn-sm" type="button">从头播放</button><button id="playback-resume" class="ui-btn ui-btn-sm" type="button">继续观看</button><button id="playback-pause" class="ui-btn ui-btn-sm" type="button">暂停</button><button id="playback-continue" class="ui-btn ui-btn-primary ui-btn-sm" type="button">继续播放</button><button id="playback-skip-ad" class="ui-btn ui-btn-sm" type="button">跳过广告</button><button id="playback-exit" class="ui-btn ui-btn-sm" type="button">退出连播</button></div><div class="description">退出后保留进度，下次点击“继续观看”恢复。</div></footer>
     <dialog id="playback-details-dialog" class="playback-source-dialog playback-details-dialog" aria-labelledby="playback-details-title">
       <section class="playback-source-content playback-details-content">
         <header class="playback-modal-header"><h2 id="playback-details-title"></h2><button id="playback-details-close" class="ui-btn ui-btn-sm" type="button">关闭</button></header>
-        <div id="playback-details-entries" class="playback-modal-scroll" aria-label="集数详情"></div>
-        <footer class="playback-source-actions playback-source-modal-actions"><span class="description">增删后请回主面板保存设置。</span><button id="playback-details-add" class="ui-btn ui-btn-primary ui-btn-sm" type="button">添加集数</button></footer>
+        <div id="playback-details-entries" class="playback-modal-scroll" aria-label="分集列表"></div>
+        <footer class="playback-source-actions playback-source-modal-actions"><span class="description">添加或删除后，请返回并点击“保存设置”。</span><button id="playback-details-add" class="ui-btn ui-btn-primary ui-btn-sm" type="button">添加分集</button></footer>
       </section>
     </dialog>
     <dialog id="playback-add-dialog" class="playback-source-dialog" aria-labelledby="playback-add-title">
@@ -61,9 +59,9 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
         <label id="playback-add-name-label" class="playback-source-input-label" for="playback-add-name">作品名称</label>
         <input id="playback-add-name" class="ui-input ui-input-sm" type="text" autocomplete="off" placeholder="作品名称">
         <label id="playback-add-url-label" class="playback-source-input-label" for="playback-add-url">B 站视频、合集或番剧链接</label>
-        <div class="playback-source-input-row"><input id="playback-add-url" class="ui-input ui-input-sm" type="text" autocomplete="url" placeholder="粘贴 B 站链接"><button id="playback-add-parse" class="ui-btn ui-btn-sm" type="submit">解析预览</button></div>
-        <p id="playback-add-status" class="playback-source-status" role="status" aria-live="polite">解析视频、合集或番剧后预览选集，也可仅添加当前链接。</p>
-        <div id="playback-add-preview" class="playback-source-preview" aria-label="解析结果预览"></div>
+        <div class="playback-source-input-row"><input id="playback-add-url" class="ui-input ui-input-sm" type="text" autocomplete="url" placeholder="粘贴 B 站链接"><button id="playback-add-parse" class="ui-btn ui-btn-sm" type="submit">获取分集</button></div>
+        <p id="playback-add-status" class="playback-source-status" role="status" aria-live="polite">粘贴链接获取分集，预览后选择要添加的内容；也可仅添加当前链接。</p>
+        <div id="playback-add-preview" class="playback-source-preview" aria-label="可添加的分集"></div>
         <div class="playback-source-actions playback-source-modal-actions"><button id="playback-add-cancel" class="ui-btn ui-btn-sm" type="button">取消</button><button id="playback-add-direct" class="ui-btn ui-btn-sm" type="button">仅添加此链接</button><button id="playback-add-confirm" class="ui-btn ui-btn-primary ui-btn-sm" type="button" disabled>加入片单</button></div>
       </form>
     </dialog>`;
@@ -79,7 +77,7 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
   let resolvingSource = false;
   let resolvedSource: ResolvedPlaybackSource | null = null;
   let selectedSourceEntries = new Set<number>();
-  let sourceStatus = '输入链接后解析可添加的分集。';
+  let sourceStatus = '粘贴链接后，点击“获取分集”。';
   let addTrigger: HTMLButtonElement | null = null;
   let detailTrigger: HTMLButtonElement | null = null;
   let detailWorkId: string | null = null;
@@ -131,13 +129,13 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
     preview.hidden = addMode === 'ad';
     if (!resolvedSource) return;
     const kindLabel: Record<ResolvedPlaybackSource['kind'], string> = {
-      parts: '分 P', collection: '合集', season: '番剧', single: '单集',
+      parts: '多分集视频', collection: '合集', season: '番剧', single: '单集',
     };
     const intro = doc.createElement('p');
     intro.className = 'playback-source-result-title';
-    intro.textContent = `${resolvedSource.title} · ${kindLabel[resolvedSource.kind]} · ${resolvedSource.entries.length} 个条目`;
+    intro.textContent = `${resolvedSource.title} · ${kindLabel[resolvedSource.kind]} · ${resolvedSource.entries.length} 集`;
     const list = doc.createElement('ul');
-    list.setAttribute('aria-label', '可添加的选集');
+    list.setAttribute('aria-label', '可添加的分集');
     resolvedSource.entries.forEach((entry, index) => {
       const row = doc.createElement('li');
       const checkbox = doc.createElement('input');
@@ -158,7 +156,7 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
     renderSourcePreview();
     renderAddControls();
   };
-  const invalidateSource = (message = '输入链接后解析可添加的分集。') => {
+  const invalidateSource = (message = '粘贴链接后，点击“获取分集”。') => {
     sourceRequestId++;
     resolvingSource = false;
     resolvedSource = null;
@@ -174,15 +172,15 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
     if (active() && mode !== 'ad') return;
     addMode = mode; targetWorkId = workId; addTrigger = trigger;
     const title = get('add-title');
-    title.textContent = mode === 'ad' ? '添加公益广告' : mode === 'entry' ? '为作品添加集数' : '添加动画作品';
-    get('add-name-label').textContent = mode === 'ad' ? '广告名称（选填）' : mode === 'entry' ? '集数名称（选填）' : '作品名称（手动添加时必填）';
+    title.textContent = mode === 'ad' ? '添加公益广告' : mode === 'entry' ? '添加分集' : '添加作品';
+    get('add-name-label').textContent = mode === 'ad' ? '广告名称（选填）' : mode === 'entry' ? '分集名称（选填）' : '作品名称（仅添加链接时必填）';
     get<HTMLInputElement>('add-name').placeholder = get('add-name-label').textContent!;
-    get('add-url-label').textContent = mode === 'ad' ? 'B 站视频、指定分 P 或番剧 ep 链接' : 'B 站视频、合集或番剧链接';
+    get('add-url-label').textContent = mode === 'ad' ? 'B 站视频或番剧单集链接' : 'B 站视频、合集或番剧链接';
     get<HTMLInputElement>('add-name').value = '';
     get<HTMLInputElement>('add-url').value = '';
-    invalidateSource(mode === 'ad' ? '公益广告仅添加指定链接，不会解析合集。' : '解析视频、合集或番剧后预览选集，也可仅添加当前链接。');
+    invalidateSource(mode === 'ad' ? '仅添加链接对应的视频；如需指定分集，请粘贴该分集的链接。' : '粘贴链接获取分集，预览后选择要添加的内容；也可仅添加当前链接。');
     get<HTMLButtonElement>('add-direct').textContent = mode === 'ad' ? '添加广告' : '仅添加此链接';
-    get<HTMLButtonElement>('add-confirm').textContent = mode === 'entry' ? '添加所选集数' : '加入片单';
+    get<HTMLButtonElement>('add-confirm').textContent = mode === 'entry' ? '添加所选分集' : '加入片单';
     addDialog.showModal();
     get<HTMLInputElement>('add-url').focus();
   };
@@ -193,21 +191,21 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
     resolvingSource = true;
     resolvedSource = null;
     selectedSourceEntries.clear();
-    sourceStatus = '正在解析链接…';
+    sourceStatus = '正在获取分集…';
     renderSourceState();
     try {
       const source = await client.resolveSource(url);
       if (requestId !== sourceRequestId || disposed || !addDialog.open || get<HTMLInputElement>('add-url').value.trim() !== url) return;
       if (!source.entries.length) {
-        sourceStatus = '没有解析到可添加的选集。';
+        sourceStatus = '未找到可添加的分集，也可以选择“仅添加此链接”。';
         return;
       }
       resolvedSource = source;
       selectedSourceEntries = new Set(source.entries.map((_entry, index) => index));
-      sourceStatus = `已解析 ${source.entries.length} 个条目，请预览并选择要添加的集数。`;
+      sourceStatus = `已找到 ${source.entries.length} 个分集，请选择要添加的内容。`;
     } catch (error) {
       if (requestId !== sourceRequestId || disposed || !addDialog.open) return;
-      sourceStatus = error instanceof Error ? `解析失败：${error.message}` : '解析失败，请检查链接后重试。';
+      sourceStatus = error instanceof Error ? error.message : '未能获取分集，请检查链接后重试。';
     } finally {
       if (requestId === sourceRequestId && !disposed) {
         resolvingSource = false;
@@ -253,11 +251,11 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
     works.replaceChildren();
     draft.works.forEach((work, index) => {
       const group = doc.createElement('section'); group.className = 'playback-work';
-      const title = button(`${index + 1}. ${work.title} · ${work.entries.length} 集${work.sourceStatus === 'failed' ? ' · 解析失败' : ''}`, () => openDetailsDialog(work.id, title));
+      const title = button(`${index + 1}. ${work.title} · ${work.entries.length} 集${work.sourceStatus === 'failed' ? ' · 分集获取失败' : ''}`, () => openDetailsDialog(work.id, title));
       title.className = 'ui-btn ui-btn-ghost playback-work-open';
       title.dataset.workId = work.id;
       title.setAttribute('aria-haspopup', 'dialog');
-      title.setAttribute('aria-label', `${work.title}，${work.entries.length} 集，集数详情`);
+      title.setAttribute('aria-label', `${work.title}，${work.entries.length} 集，查看分集`);
       const remove = button('删除作品', () => {
         draft.works.splice(index, 1); markDirty(); renderLists();
       });
@@ -280,13 +278,21 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
       const work = state.config.works.find(item => item.entries.some(candidate => candidate.id === entry.id));
       return work ? `${work.title} · ${entry.title}` : entry.title;
     };
-    get('status').textContent = `${state.mode === 'animation' ? '动画频道' : '普通观看'} · ${STATUS[state.status]}`;
+    get('status').textContent = `${state.mode === 'animation' ? '动画连播' : '普通观看'} · ${STATUS[state.status]}`;
     get('current').textContent = `当前：${entryLabel(state.current) ?? '当前页面视频'}`;
-    get('next').textContent = `接下来：${entryLabel(state.next) ?? '由原播放器决定'}`;
+    get('next').textContent = `接下来：${entryLabel(state.next) ?? '由 B 站播放器控制'}`;
     const seconds = Math.floor(state.elapsedMs / 1000);
-    get('clock').textContent = `本模式累计 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} / ${state.config.intervalMinutes} 分钟`;
+    const adsEnabled = state.mode === 'animation' ? state.config.animationAds : state.config.normalAds;
+    get('clock').textContent = adsEnabled
+      ? `累计观看 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒 · 广告间隔 ${state.config.intervalMinutes} 分钟`
+      : `${state.mode === 'animation' ? '动画中途' : '普通观看片尾'}插播已关闭`;
     get('message').textContent = state.ad ? `正在插播：${state.ad.title}。${state.message}` : state.message;
-    get('ad-notice').textContent = draft.animationAds ? '动画公益广告已开启：到点暂停，插播后断点继续。' : '动画公益广告已关闭。';
+    const adChanges: string[] = [];
+    if (draft.animationAds !== state.config.animationAds) adChanges.push(`动画中途插播将${draft.animationAds ? '开启' : '关闭'}`);
+    if (draft.normalAds !== state.config.normalAds) adChanges.push(`普通观看片尾插播将${draft.normalAds ? '开启' : '关闭'}`);
+    get('ad-notice').textContent = adChanges.length
+      ? `${adChanges.join('；')}，保存后生效。`
+      : `动画中途插播已${state.config.animationAds ? '开启' : '关闭'}。`;
     get('catalog-message').textContent = state.catalogMessage ?? '';
     get<HTMLButtonElement>('cancel-catalog').hidden = !state.catalogResolving;
     get<HTMLButtonElement>('add-work').disabled = active();
@@ -301,7 +307,6 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
     get('exit').hidden = !active();
     renderAddControls();
   };
-  get('back').addEventListener('click', onBack);
   get<HTMLButtonElement>('cancel-catalog').addEventListener('click', cancelCatalogResolution);
   get<HTMLButtonElement>('add-work').addEventListener('click', () => openAddDialog('work', get('add-work')));
   get<HTMLButtonElement>('add-ad').addEventListener('click', () => openAddDialog('ad', get('add-ad')));
@@ -319,8 +324,8 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
   });
   get<HTMLInputElement>('add-url').addEventListener('input', () => {
     const url = get<HTMLInputElement>('add-url').value.trim();
-    invalidateSource(addMode === 'ad' ? '公益广告仅添加指定链接，不会解析合集。'
-      : url ? '链接已更改，请重新解析。' : '输入链接后解析可添加的分集。');
+    invalidateSource(addMode === 'ad' ? '仅添加链接对应的视频；如需指定分集，请粘贴该分集的链接。'
+      : url ? '链接已更改，请重新点击“获取分集”。' : '粘贴链接后，点击“获取分集”。');
   });
   const appendEntries = (entries: PlaybackEntry[], sourceTitle: string, sourceStatus: 'manual' | 'resolved') => {
     if (addMode === 'work') {
@@ -345,11 +350,16 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
     if (active() && addMode !== 'ad') return;
     const urlInput = get<HTMLInputElement>('add-url');
     const normalized = normalizePlaybackUrl(urlInput.value.trim());
-    if (!normalized) { get('add-status').textContent = '请输入 B 站 BV 视频、指定分 P 或番剧 ep 链接。'; urlInput.focus(); return; }
+    if (!normalized) {
+      get('add-status').textContent = addMode === 'ad'
+        ? '请输入 B 站视频或番剧单集链接，可打开对应视频后复制地址。'
+        : '请输入 B 站视频或番剧单集链接；合集和整季番剧请先点击“获取分集”。';
+      urlInput.focus(); return;
+    }
     const name = get<HTMLInputElement>('add-name').value.trim();
     if (addMode === 'work' && !name) { get('add-status').textContent = '手动添加作品时请填写作品名称。'; get<HTMLInputElement>('add-name').focus(); return; }
     const count = addMode === 'entry' ? (findWork(targetWorkId)?.entries.length ?? 0) : draft.ads.length;
-    const entry = { id: crypto.randomUUID(), title: name || `条目 ${count + 1}`, url: normalized };
+    const entry = { id: crypto.randomUUID(), title: name || `${addMode === 'ad' ? '公益广告' : '分集'} ${count + 1}`, url: normalized };
     appendEntries([entry], name || '公益广告', 'manual');
   });
   get<HTMLButtonElement>('add-confirm').addEventListener('click', () => {
@@ -359,7 +369,7 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
       if (!selectedSourceEntries.has(index)) return [];
       return [{ ...entry, id: crypto.randomUUID() }];
     });
-    if (!entries.length) { sourceStatus = '请至少选择一个有效条目。'; renderSourceState(); return; }
+    if (!entries.length) { sourceStatus = '请至少选择一个分集。'; renderSourceState(); return; }
     appendEntries(entries, source.title, 'resolved');
   });
   get<HTMLButtonElement>('details-close').addEventListener('click', () => detailsDialog.close());
@@ -381,8 +391,8 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
   get<HTMLSelectElement>('order').addEventListener('change', event => { draft.order = (event.target as HTMLSelectElement).value as PlaybackConfig['order']; markDirty(); });
   get<HTMLInputElement>('interval').addEventListener('input', () => { draft.intervalMinutes = Number(get<HTMLInputElement>('interval').value); markDirty(); });
   get('save').addEventListener('click', async () => {
-    if (!(draft.intervalMinutes > 0) || !Number.isFinite(draft.intervalMinutes)) { feedback('广告间隔需要是大于零的分钟数。'); get('interval').focus(); return; }
-    if (draft.works.some(work => !work.entries.length)) { feedback('请为每部作品至少添加一个条目，或删除空作品。'); return; }
+    if (!(draft.intervalMinutes > 0) || !Number.isFinite(draft.intervalMinutes)) { feedback('广告间隔请输入大于 0 的分钟数。'); get('interval').focus(); return; }
+    if (draft.works.some(work => !work.entries.length)) { feedback('请为每部作品至少添加一个分集，或删除没有分集的作品。'); return; }
     const savedRevision = draftRevision;
     if (await send({ type: 'save-config', config: structuredClone(draft) }) && !disposed && savedRevision === draftRevision) {
       dirty = false; feedback('播放设置已保存'); renderStatus();
@@ -402,5 +412,5 @@ export function createPlaybackPanel(doc: Document, client: PlaybackPanelClient, 
     if (detailsDialog.open && (configChanged || wasActive !== active())) renderDetailsEntries();
     renderStatus();
   });
-  return { element, back: get<HTMLButtonElement>('back'), open: resolveCatalogOnOpen, destroy: () => { disposed = true; unsubscribe(); element.remove(); } };
+  return { element, open: resolveCatalogOnOpen, destroy: () => { disposed = true; unsubscribe(); element.remove(); } };
 }

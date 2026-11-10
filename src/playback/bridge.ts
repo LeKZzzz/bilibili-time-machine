@@ -31,17 +31,17 @@ function createSourceResolver(target: Window, fetcher?: typeof fetch): (url: str
   // 在 Hook 安装前捕获页面 fetch，避免元数据请求经过后装的过滤包装器。
   const request = fetcher ?? target.fetch?.bind(target);
   const requestJson = async (url: string): Promise<unknown> => {
-    if (!request) throw new Error('当前页面无法请求 B 站片源接口。');
+    if (!request) throw new Error('当前无法获取视频信息，请刷新页面后重试。');
     const controller = new AbortController();
     const timer = target.setTimeout(() => controller.abort(), SOURCE_FETCH_TIMEOUT_MS);
     try {
       const response = await request(url, { credentials: 'include', signal: controller.signal });
-      if (!response.ok) throw new Error(`片源请求失败（HTTP ${response.status}）。`);
+      if (!response.ok) throw new Error(`暂时无法获取视频信息（错误代码：HTTP ${response.status}），请稍后重试。`);
       return await response.json() as unknown;
     } catch (error) {
-      if (controller.signal.aborted) throw new Error('片源解析请求超时，请稍后重试。');
-      if (error instanceof Error && error.message.startsWith('片源请求失败')) throw error;
-      throw new Error(`片源解析请求失败：${errorMessage(error, '网络错误')}。`);
+      if (controller.signal.aborted) throw new Error('获取视频信息超时，请稍后重试。');
+      if (error instanceof Error && error.message.startsWith('暂时无法获取视频信息（错误代码：HTTP ')) throw error;
+      throw new Error('暂时无法获取视频信息，请检查网络后重试。');
     } finally {
       target.clearTimeout(timer);
     }
@@ -66,7 +66,7 @@ export function createPlaybackBridgeClient(target: Window, storage: ConfigStorag
     if (message.type === 'command-result') {
       const command = commands.get(message.id);
       commands.delete(message.id);
-      if (message.error) command?.reject(new Error('播放操作或保存失败，请重试'));
+      if (message.error) command?.reject(new Error('操作未完成，请重试。'));
       else command?.resolve();
     }
     if (message.type === 'ready') initialize();
@@ -93,25 +93,25 @@ export function createPlaybackBridgeClient(target: Window, storage: ConfigStorag
     if (message.type === 'resolve-source' && Number.isInteger(message.id) && typeof message.url === 'string') {
       void resolveSource(message.url).then(
         result => send(target, { type: 'source-result', id: message.id, result }),
-        error => send(target, { type: 'source-result', id: message.id, error: errorMessage(error, '片源解析失败，请重试。') }),
+        error => send(target, { type: 'source-result', id: message.id, error: errorMessage(error, '未能获取视频信息，请稍后重试。') }),
       );
     }
   });
   void storage.get(PLAYBACK_STORAGE_KEY).then((value) => {
     data = value ?? createDefaultPlaybackData(); loaded = true; initialize();
   }).catch(() => {
-    state = { ...state, message: '播放配置读取失败，请刷新后重试。' };
+    state = { ...state, message: '无法读取播放设置，请刷新页面后重试。' };
     for (const listener of listeners) listener(state);
   });
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
     command(command) {
-      if (!loaded) throw new Error('播放设置尚未就绪');
+      if (!loaded) throw new Error('正在读取播放设置，请稍候再试。');
       return new Promise<void>((resolve, reject) => {
         const id = ++commandId;
         const timer = target.setTimeout(() => {
-          commands.delete(id); reject(new Error('播放控制器未响应，请刷新后重试'));
+          commands.delete(id); reject(new Error('播放操作未响应，请刷新页面后重试。'));
         }, 10_000);
         commands.set(id, {
           resolve() { target.clearTimeout(timer); resolve(); },
@@ -139,15 +139,15 @@ export function installPlaybackBridgeHost(target: Window): void {
     const requestId = ++id;
     const timer = target.setTimeout(() => {
       sourceRequests.delete(requestId);
-      reject(new Error('片源解析等待超时，请重试。'));
+      reject(new Error('获取视频信息超时，请稍后重试。'));
     }, SOURCE_RPC_TIMEOUT_MS);
     sourceRequests.set(requestId, { resolve, reject, timer });
     try {
       send(target, { type: 'resolve-source', id: requestId, url });
-    } catch (error) {
+    } catch {
       target.clearTimeout(timer);
       sourceRequests.delete(requestId);
-      reject(new Error(errorMessage(error, '片源解析请求发送失败。')));
+      reject(new Error('无法获取视频信息，请刷新页面后重试。'));
     }
   });
   const storage: ConfigStorage = {
@@ -210,7 +210,7 @@ export function installPlaybackBridgeHost(target: Window): void {
       target.clearTimeout(request.timer);
       if (typeof message.error === 'string') request.reject(new Error(message.error));
       else if (isResolvedSource(message.result)) request.resolve(message.result);
-      else request.reject(new Error('片源解析响应无效，请重试。'));
+      else request.reject(new Error('未能获取视频信息，请稍后重试。'));
     }
   });
   send(target, { type: 'ready' });
