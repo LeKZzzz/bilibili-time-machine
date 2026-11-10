@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { createAdvertisementOverlay } from '../../src/playback/overlay';
 import type { PlaybackPlayer, PlaybackPlayerEvent } from '../../src/playback/player';
 
@@ -43,8 +43,8 @@ describe('公益广告覆盖层分段与续播', () => {
   let media: MediaState;
   let seekTarget: number | undefined;
   let emit: (event: PlaybackPlayerEvent) => void;
-  let onProgress: ReturnType<typeof vi.fn>;
-  let onFinish: ReturnType<typeof vi.fn>;
+  let onProgress: Mock<(position: number) => void>;
+  let onFinish: Mock<(reason: 'ended' | 'skipped' | 'error' | 'segment') => void>;
   let adPlayer: PlaybackPlayer;
 
   function setup(position = 0) {
