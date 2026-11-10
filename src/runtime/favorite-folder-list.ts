@@ -1,4 +1,4 @@
-import type { FavoriteFolderOption } from '../core/types';
+import type { FavoriteFolderList, FavoriteFolderOption } from '../core/types';
 import { loadFavoriteFolders, resolveBilibiliUid } from './favorite-home-fill-controller';
 
 const FAVORITE_FOLDER_CACHE_PREFIX = 'bilibili-time-filter:favorite-folders:v1:';
@@ -45,7 +45,7 @@ export function createFavoriteFolderLoader(
   request: typeof fetch,
   isEnabled: () => boolean,
   storage?: Storage,
-): (force?: boolean, isActive?: () => boolean) => Promise<FavoriteFolderOption[]> {
+): (force?: boolean, isActive?: () => boolean) => Promise<FavoriteFolderList> {
   const memory = new Map<string, FavoriteFolderOption[]>();
   const resolveStorage = (): Storage | null => {
     if (storage) return storage;
@@ -82,17 +82,17 @@ export function createFavoriteFolderLoader(
       // 配额或隐私模式导致写入失败时保留当前页面内存缓存。
     }
   };
-  return async (force = false, isActive = () => true): Promise<FavoriteFolderOption[]> => {
+  return async (force = false, isActive = () => true): Promise<FavoriteFolderList> => {
     const allowed = (): boolean => isEnabled() && isActive();
     if (!allowed()) throw new Error('favorite folder loading disabled');
     const uid = await resolveBilibiliUid(request);
     if (!uid) throw new Error('uid unavailable');
     if (!allowed()) throw new Error('favorite folder loading disabled');
     const cached = readCache(uid);
-    if (cached && !force) return copyFolders(cached);
+    if (cached && !force) return { uid, folders: copyFolders(cached) };
     const folders = await loadFavoriteFolders(request, uid, allowed);
     if (!allowed()) throw new Error('favorite folder loading disabled');
     writeCache(uid, folders);
-    return copyFolders(folders);
+    return { uid, folders: copyFolders(folders) };
   };
 }

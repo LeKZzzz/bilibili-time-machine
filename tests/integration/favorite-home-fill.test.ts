@@ -10,7 +10,7 @@ import { createFavoriteHomeFillController, type FavoriteHomeFillController } fro
 
 const config: FilterConfig = {
   cutoffMinute: '2020-01-01T00:00', enabled: true, supplementBudget: 20, debug: false,
-  favoriteHomeFillEnabled: true, favoriteFolderIds: ['1'], favoriteFolderLimit: 1, favoriteVideoLimit: 1,
+  favoriteHomeFillEnabled: true, favoriteFolderIds: ['1'], favoriteFolderUid: '7', favoriteFolderLimit: 1, favoriteVideoLimit: 1,
 };
 
 function renderHome(): void {
@@ -46,6 +46,95 @@ describe('favorite home fill search lifecycle', () => {
     controllers.splice(0).forEach((controller) => controller.disconnect());
     vi.useRealTimers();
     document.body.replaceChildren();
+  });
+
+  it.each([null, 'other-account'])('requires source selection for the current account before reading favorites (owner: %s)', async (favoriteFolderUid) => {
+    const getSnapshot = vi.fn(store.getSnapshot.bind(store));
+    const putSnapshot = vi.fn(store.putSnapshot.bind(store));
+    const request = vi.fn(async (_input: RequestInfo | URL) => response({ mid: 7 }));
+    const controller = createFavoriteHomeFillController({ root: document,
+      store: { ...store, getSnapshot, putSnapshot }, fetch: request as typeof fetch,
+      config: { ...config, favoriteFolderUid } });
+    controllers.push(controller);
+    await controller.run();
+    expect(controller.getState()).toMatchObject({ phase: 'idle', reason: 'account-changed', hasCachedPreferences: false });
+    expect(getSnapshot).not.toHaveBeenCalled();
+    expect(putSnapshot).not.toHaveBeenCalled();
+    expect(request.mock.calls.every(([url]) => String(url).includes('/nav'))).toBe(true);
+    expect(document.querySelector('[data-favorite-home-fill]')).toBeNull();
+  });
+
+  it('detects a same-page account switch before reusing an unchanged batch or showing cached tags', async () => {
+    let uid = 7;
+    const request = vi.fn(async (input: RequestInfo | URL) => String(input).includes('/nav')
+      ? response({ mid: uid })
+      : response({ numPages: 1, result: [{ bvid: 'BVaccountA', pubdate: 1 }] }));
+    const controller = createFavoriteHomeFillController({ root: document, store, rng: () => 0, fetch: request as typeof fetch, config });
+    controllers.push(controller);
+    await controller.run();
+    expect(document.querySelector('[data-favorite-home-fill]')).not.toBeNull();
+    uid = 8;
+    const before = request.mock.calls.length;
+    await controller.run();
+    expect(controller.getState()).toMatchObject({ phase: 'idle', reason: 'account-changed', hasCachedPreferences: false });
+    expect(document.querySelector('[data-favorite-home-fill]')).toBeNull();
+    await expect(controller.getTags()).resolves.toEqual([]);
+    expect(request.mock.calls.slice(before).every(([url]) => String(url).includes('/nav'))).toBe(true);
+    expect(await store.getSnapshot('8')).toBeNull();
+    expect(await store.getHistory('8')).toEqual([]);
+  });
+
+  it('does not reuse a previous account source after a page reload and resumes only after reselection', async () => {
+    const folders: string[] = [];
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/nav')) return response({ mid: 8 });
+      if (url.pathname.includes('/fav/resource/list')) {
+        folders.push(url.searchParams.get('media_id')!);
+        return response({ medias: [{ bvid: 'BVfavoriteB', tags: ['账号八'] }] });
+      }
+      return response({ numPages: 0, result: [] });
+    });
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    controllers.push(controller);
+    await controller.run();
+    expect(controller.getState().reason).toBe('account-changed');
+    expect(folders).toEqual([]);
+    expect(await store.getSnapshot('8')).toBeNull();
+    controller.updateConfig({ ...config, favoriteFolderUid: '8', favoriteFolderIds: ['2'] });
+    await controller.run();
+    expect(folders).toEqual(['2']);
+    expect((await store.getSnapshot('8'))?.tags.map(({ tag }) => tag)).toEqual(['账号八']);
+    expect((await store.getSnapshot('7'))?.tags.map(({ tag }) => tag)).toEqual(['游戏']);
+  });
+
+  it('cancels in-flight old-account preferences when a new account selection is saved', async () => {
+    await store.clear();
+    let uid = 7;
+    let release!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const readingOldFolder = new Promise<void>((resolve) => { started = resolve; });
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/nav')) return response({ mid: uid });
+      if (url.pathname.includes('/fav/resource/list')) {
+        if (url.searchParams.get('media_id') === '1') { started(); return pending; }
+        return response({ medias: [{ bvid: 'BVfavoriteB', tags: ['账号八'] }] });
+      }
+      return response({ numPages: 0, result: [] });
+    });
+    const controller = createFavoriteHomeFillController({ root: document, store, fetch: request as typeof fetch, config });
+    controllers.push(controller);
+    const work = controller.run();
+    await readingOldFolder;
+    uid = 8;
+    controller.updateConfig({ ...config, favoriteFolderUid: '8', favoriteFolderIds: ['2'] });
+    release(response({ medias: [{ bvid: 'BVfavoriteA', tags: ['账号七'] }] }));
+    await work;
+    await controller.run();
+    expect(await store.getSnapshot('7')).toBeNull();
+    expect((await store.getSnapshot('8'))?.tags.map(({ tag }) => tag)).toEqual(['账号八']);
   });
 
   it('continues beyond exhausted legacy results and persists the next page across controller restarts', async () => {
@@ -88,6 +177,7 @@ describe('favorite home fill search lifecycle', () => {
     controllers.push(controller);
     await controller.run();
     const calls = request.mock.calls.length;
+    const settledState = controller.getState();
     const banner = document.createElement('div');
     document.body.appendChild(banner);
     banner.textContent = '页面轮播更新';
@@ -95,7 +185,9 @@ describe('favorite home fill search lifecycle', () => {
     await controller.run();
     expect(searches).toHaveLength(5);
     expect(new Set(searches).size).toBe(5);
-    expect(request).toHaveBeenCalledTimes(calls);
+    expect(request).toHaveBeenCalledTimes(calls + 1);
+    expect(String(request.mock.lastCall?.[0])).toContain('/x/web-interface/nav');
+    expect(controller.getState()).toEqual(settledState);
 
     const newCard = document.querySelector('[data-bvid="BVhidden"]')!.cloneNode(true) as Element;
     newCard.setAttribute('data-bvid', 'BVnextbatch');
@@ -332,7 +424,7 @@ describe('favorite home fill search lifecycle', () => {
     await Promise.resolve();
     await controller.run();
     expect(onNotice).toHaveBeenCalledOnce();
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(3);
     expect(document.querySelector('[data-favorite-home-fill]')).toBeNull();
   });
 

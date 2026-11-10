@@ -17,6 +17,7 @@ export const HISTORY_TTL_MS = FAVORITE_HISTORY_TTL;
 export interface FavoriteHomeFillConfig {
   favoriteHomeFillEnabled?: boolean;
   favoriteFolderIds?: string[];
+  favoriteFolderUid?: string | null;
   favoriteFolderLimit?: number;
   favoriteVideoLimit?: number;
 }

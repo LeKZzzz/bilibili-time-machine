@@ -14,6 +14,8 @@ import { isPlaybackPage } from '../playback/runtime';
 import type { PlaybackPanelClient } from '../ui/playback-panel';
 
 let playback: PlaybackPanelClient | undefined;
+// 同一标签页的路由重建共用队列，避免旧页面的慢写入覆盖新设置。
+let pendingSave = Promise.resolve();
 
 const STORAGE_KEY = 'bilibili-time-filter.config.v1';
 const BRIDGE_SOURCE = 'bilibili-time-filter';
@@ -35,6 +37,7 @@ function normaliseConfig(value: unknown): FilterPanelConfig {
       ? input.autoAdvanceBaseCutoffMinute : null,
     favoriteHomeFillEnabled: input.favoriteHomeFillEnabled === true,
     favoriteFolderIds: Array.isArray(input.favoriteFolderIds) ? input.favoriteFolderIds.filter((id): id is string => typeof id === 'string').slice(0, 10) : [],
+    favoriteFolderUid: typeof input.favoriteFolderUid === 'string' && input.favoriteFolderUid ? input.favoriteFolderUid : null,
     favoriteFolderLimit: Number.isFinite(input.favoriteFolderLimit) ? Math.min(10, Math.max(1, Math.round(Number(input.favoriteFolderLimit)))) : 3,
     favoriteVideoLimit: Number.isFinite(input.favoriteVideoLimit) ? Math.min(200, Math.max(1, Math.round(Number(input.favoriteVideoLimit)))) : 50,
     favoriteRefreshRequestedAt: Number.isFinite(input.favoriteRefreshRequestedAt) ? input.favoriteRefreshRequestedAt : null,
@@ -47,11 +50,7 @@ async function loadConfig(): Promise<FilterPanelConfig> {
 }
 
 async function saveConfig(config: FilterPanelConfig): Promise<void> {
-  try {
-    await chrome.storage.local.set({ [STORAGE_KEY]: config });
-  } catch {
-    // 浏览器存储不可用时保留当前标签页的内存状态。
-  }
+  await chrome.storage.local.set({ [STORAGE_KEY]: config });
 }
 
 function send(config: FilterPanelConfig): void {
@@ -115,8 +114,11 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
       controller.updateConfig(current);
       favoriteFill?.updateConfig(current);
       nativeSearchFilter?.apply(current);
-      await saveConfig(current);
       send(current);
+      const configToSave = current;
+      // 顺序写入，避免较早的慢写入覆盖用户刚修改的设置。
+      pendingSave = pendingSave.catch(() => undefined).then(() => saveConfig(configToSave));
+      await pendingSave;
     },
   });
   panel.updateFavoriteState(favoriteFill.getState());

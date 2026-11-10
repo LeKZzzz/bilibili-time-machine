@@ -114,6 +114,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .panel-footer { flex-shrink: 0; padding: 12px calc(var(--panel-gutter) + var(--scrollbar-size)) 12px var(--panel-gutter); border-top: 1px solid var(--line); background: var(--color-base-200); }
 .status { color: #435a6a; font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .hint { margin-top: 4px; }
+#config-save-retry { margin-top: 8px; }
 .dialog-body { padding: 0 var(--panel-gutter) 16px; }
 .tag-dialog-title .brand { font-size: 16px; }
 .tag-dialog-status { min-height: 19px; }

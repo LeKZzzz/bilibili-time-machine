@@ -1,6 +1,6 @@
 /** 页面内的紧凑设置面板；字段与共享 FilterConfig 保持一致。 */
 
-import type { FavoriteFolderOption, FilterConfig } from '../core/types';
+import type { FavoriteFolderList, FavoriteFolderOption, FilterConfig } from '../core/types';
 import type { FavoriteTagScore } from '../core/favorite-home-fill';
 import { parseLocalMinute } from '../core/time';
 import type { FavoriteHomeFillState } from '../runtime/favorite-home-fill-controller';
@@ -13,7 +13,7 @@ export interface FilterPanelOptions {
   config: FilterPanelConfig;
   document?: Document;
   onChange?: (config: FilterPanelConfig) => void | Promise<void>;
-  onFavoriteFoldersRefresh?: (force?: boolean, isActive?: () => boolean) => Promise<FavoriteFolderOption[]>;
+  onFavoriteFoldersRefresh?: (force?: boolean, isActive?: () => boolean) => Promise<FavoriteFolderList>;
   onFavoriteContinue?: () => void | Promise<void>;
   onFavoriteTagsLoad?: () => Promise<FavoriteTagScore[]>;
   playback?: PlaybackPanelClient;
@@ -44,6 +44,7 @@ function normaliseConfig(config: FilterPanelConfig): FilterPanelConfig {
     autoAdvanceBaseCutoffMinute: config.autoAdvanceBaseCutoffMinute || null,
     favoriteHomeFillEnabled: config.favoriteHomeFillEnabled === true,
     favoriteFolderIds: Array.isArray(config.favoriteFolderIds) ? config.favoriteFolderIds.filter(Boolean).slice(0, 10) : [],
+    favoriteFolderUid: config.favoriteFolderUid || null,
     favoriteFolderLimit: Math.min(10, Math.max(1, Math.round(config.favoriteFolderLimit ?? 3))),
     favoriteVideoLimit: Math.min(200, Math.max(1, Math.round(config.favoriteVideoLimit ?? 50))),
     favoriteRefreshRequestedAt: Number.isFinite(config.favoriteRefreshRequestedAt) ? config.favoriteRefreshRequestedAt : null,
@@ -120,7 +121,7 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
               <div class="row"><label for="budget">发布时间查询上限<span class="description" style="display:block">视频缺少发布时间时，查询视频详情</span></label><input id="budget" class="ui-input ui-input-sm" type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="每页发布时间查询上限"></div>
             </details>
           </div>
-          <footer class="panel-footer"><div class="status" role="status" aria-live="polite"></div><div class="hint">仅保留严格早于截止时间的内容</div></footer>
+          <footer class="panel-footer"><div class="status" role="status" aria-live="polite"></div><div class="hint">仅保留严格早于截止时间的内容</div><div id="config-save-feedback" hidden><div id="config-save-status" class="validation" role="status" aria-live="polite"></div><button id="config-save-retry" class="ui-btn ui-btn-sm" type="button">重试保存</button></div></footer>
         </div>
         <section id="favorite-folders-dialog" class="tag-dialog panel-view" role="region" aria-labelledby="favorite-folders-title" hidden>
           <header class="tag-dialog-title"><div><div id="favorite-folders-title" class="brand">选择收藏夹</div><div class="subtitle">保存后生效，返回将放弃本次修改</div></div><button id="favorite-folders-close" class="text-button ui-btn ui-btn-ghost ui-btn-sm" type="button" aria-label="取消并返回设置">返回</button></header>
@@ -202,6 +203,10 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
   const favoriteContinue = shadow.querySelector<HTMLButtonElement>('#favorite-continue')!;
   const favoriteContinueAction = shadow.querySelector<HTMLElement>('#favorite-continue-action')!;
   const favoriteNext = shadow.querySelector<HTMLButtonElement>('#favorite-next')!;
+  const saveFeedback = shadow.querySelector<HTMLElement>('#config-save-feedback')!;
+  const saveStatus = shadow.querySelector<HTMLElement>('#config-save-status')!;
+  const saveRetry = shadow.querySelector<HTMLButtonElement>('#config-save-retry')!;
+  let saveRevision = 0;
   let current = normaliseConfig(options.config);
   let timeDirty = false;
   let pendingEnable = false;
@@ -210,6 +215,7 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
   let continuePending = false;
   let favoriteFolderOptions: FavoriteFolderOption[] = [];
   let favoriteFoldersLoaded = false;
+  let folderListUid: string | null = null;
   let favoriteFolderLoading: Promise<void> | null = null;
   let disposed = false;
   let draftFolderIds = new Set<string>();
@@ -322,8 +328,8 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
       message = `已选 ${draftFolderIds.size} 个，请先取消部分选择，将数量减至 ${favoriteFolderLimit.value} 个以内。`;
     }
     favoriteFoldersValidation.textContent = message;
-    favoriteFoldersSave.disabled = Boolean(message) || (pendingEnable && !draftFolderIds.size);
-    return !message;
+    favoriteFoldersSave.disabled = Boolean(message) || !folderListUid || Boolean(favoriteFolderLoading) || (pendingEnable && !draftFolderIds.size);
+    return !favoriteFoldersSave.disabled;
   };
   const renderFavoriteFolders = (): void => {
     const optionsById = new Map(favoriteFolderOptions.map((folder) => [folder.id, folder]));
@@ -383,7 +389,7 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     favoriteSelectionSummary.textContent = overLimit ? `已选 ${selectedCount} 个，超出上限` : selectedCount > 1 ? `已选 ${selectedCount} 个收藏夹` : names[0] || '尚未选择收藏夹';
     favoriteSelectionSummary.title = names.join('、');
     const reason = !selectedCount ? 'no-folders' : disabled ? 'disabled' : workState.reason;
-    const reasons: Record<string, string> = { disabled: '首页补充已关闭，已保留收藏夹选择和偏好', 'no-folders': '选择收藏夹并保存，开始使用收藏偏好补充首页', paused: '开启时间过滤后，将按收藏偏好补充首页', 'no-cutoff': '请先设置并应用截止时间', 'not-home': '收藏偏好已保存，回到 B 站首页后补充视频', 'no-tags': '暂无兴趣标签，请更新收藏偏好或更换收藏夹', 'no-results': options.onFavoriteContinue ? '暂未找到符合截止时间的视频，可点击“继续寻找”' : '暂未找到符合截止时间的视频，可更新收藏偏好后重试' };
+    const reasons: Record<string, string> = { disabled: '首页补充已关闭，已保留收藏夹选择和偏好', 'no-folders': '选择收藏夹并保存，开始使用收藏偏好补充首页', 'account-changed': '收藏来源尚未绑定当前账号，请重新选择收藏夹并保存。', paused: '开启时间过滤后，将按收藏偏好补充首页', 'no-cutoff': '请先设置并应用截止时间', 'not-home': '收藏偏好已保存，回到 B 站首页后补充视频', 'no-tags': '暂无兴趣标签，请更新收藏偏好或更换收藏夹', 'no-results': options.onFavoriteContinue ? '暂未找到符合截止时间的视频，可点击“继续寻找”' : '暂未找到符合截止时间的视频，可更新收藏偏好后重试' };
     favoriteContinue.disabled = disabled || !selectedCount || busy || continuePending || Boolean(reason && reason !== 'no-results');
     favoriteContinueAction.hidden = !options.onFavoriteContinue;
     const retryPreferences = favoriteRefresh.disabled ? '请重新选择收藏夹后重试。' : '请点击“更新收藏偏好”重试。';
@@ -422,12 +428,17 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     if (favoriteFolderLoading) return favoriteFolderLoading;
     favoriteFolderStatus.textContent = '正在读取收藏夹…';
     favoriteFoldersRefresh.disabled = true;
-    favoriteFolderLoading = options.onFavoriteFoldersRefresh(force, () => !disposed && (favoriteEnabled.checked || pendingEnable)).then((folders) => {
+    favoriteFolderLoading = options.onFavoriteFoldersRefresh(force, () => !disposed && (favoriteEnabled.checked || pendingEnable)).then(({ uid, folders }) => {
       if (disposed || (!favoriteEnabled.checked && !pendingEnable)) return;
+      const accountChanged = (folderListUid !== null && folderListUid !== uid) || (folderListUid === null && current.favoriteFolderUid !== uid);
+      folderListUid = uid;
+      if (accountChanged) draftFolderIds.clear();
       favoriteFolderOptions = folders.filter((folder) => folder && typeof folder.id === 'string' && folder.id);
       favoriteFoldersLoaded = true;
       renderFavoriteFolders();
-      favoriteFolderStatus.textContent = favoriteFolderOptions.length ? `已读取 ${favoriteFolderOptions.length} 个收藏夹` : '未找到可用收藏夹';
+      favoriteFolderStatus.textContent = accountChanged && current.favoriteFolderIds?.length
+        ? '收藏来源尚未绑定当前账号，请重新选择后保存。'
+        : favoriteFolderOptions.length ? `已读取 ${favoriteFolderOptions.length} 个收藏夹` : '未找到可用收藏夹';
     }).catch(() => {
       if (!disposed && (favoriteEnabled.checked || pendingEnable)) favoriteFolderStatus.textContent = '未能读取收藏夹，已保留现有选择。请点击“刷新收藏夹列表”重试。';
     }).finally(() => {
@@ -482,6 +493,27 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
       : '关闭过滤后，请刷新页面以恢复完整内容';
     hint.hidden = current.enabled;
   };
+  const persistCurrent = async (): Promise<boolean> => {
+    const revision = ++saveRevision;
+    saveRetry.disabled = true;
+    try {
+      await options.onChange?.(current);
+      if (!disposed && revision === saveRevision) {
+        saveFeedback.hidden = true;
+        saveStatus.textContent = '';
+      }
+      return true;
+    } catch {
+      if (!disposed && revision === saveRevision) {
+        saveFeedback.hidden = false;
+        saveStatus.textContent = '当前页面已应用，设置未保存，刷新或换页后可能恢复旧值。请重试保存。';
+      }
+      return false;
+    } finally {
+      if (!disposed && revision === saveRevision) saveRetry.disabled = false;
+    }
+  };
+  saveRetry.addEventListener('click', () => { void persistCurrent(); });
   const emit = (resetAutoAnchor = false): void => {
     let nextAutoAdvance = autoAdvance.checked;
     if (nextAutoAdvance && !current.cutoffMinute) {
@@ -504,6 +536,7 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
       autoAdvanceBaseCutoffMinute,
       favoriteHomeFillEnabled: favoriteEnabled.checked,
       favoriteFolderIds: current.favoriteFolderIds,
+      favoriteFolderUid: current.favoriteFolderUid,
       favoriteFolderLimit: current.favoriteFolderLimit,
       favoriteVideoLimit: current.favoriteVideoLimit,
       favoriteRefreshRequestedAt: current.favoriteRefreshRequestedAt ?? null,
@@ -512,7 +545,7 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     budget.value = String(current.supplementBudget);
     renderFilterStatus();
     renderFavoriteControls();
-    void options.onChange?.(current);
+    void persistCurrent();
   };
   const setOpen = (open: boolean): void => {
     if (!open) {
@@ -611,7 +644,7 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     else void refreshFavoriteFolders();
   });
   const openFavoriteFolders = (enableOnSave = false): void => {
-    draftFolderIds = new Set(current.favoriteFolderIds ?? []);
+    draftFolderIds = new Set(folderListUid && current.favoriteFolderUid !== folderListUid ? [] : current.favoriteFolderIds ?? []);
     favoriteFolderLimit.value = String(current.favoriteFolderLimit ?? 3);
     favoriteVideoLimit.value = String(current.favoriteVideoLimit ?? 50);
     openDialog(favoriteFoldersDialog, favoriteFoldersClose, favoriteFoldersOpen);
@@ -626,7 +659,7 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
   favoriteFoldersSave.addEventListener('click', () => {
     if (!validateDraft()) return;
     if (pendingEnable) favoriteEnabled.checked = true;
-    current = { ...current, favoriteFolderIds: [...draftFolderIds], favoriteFolderLimit: Number(favoriteFolderLimit.value), favoriteVideoLimit: Number(favoriteVideoLimit.value), favoriteRefreshRequestedAt: Math.max(Date.now(), (current.favoriteRefreshRequestedAt ?? 0) + 1) };
+    current = { ...current, favoriteFolderIds: [...draftFolderIds], favoriteFolderUid: folderListUid, favoriteFolderLimit: Number(favoriteFolderLimit.value), favoriteVideoLimit: Number(favoriteVideoLimit.value), favoriteRefreshRequestedAt: Math.max(Date.now(), (current.favoriteRefreshRequestedAt ?? 0) + 1) };
     if (draftFolderIds.size) workState = { ...workState, phase: 'updating' };
     emit();
     closeDialog();
@@ -641,16 +674,7 @@ export function createFilterPanel(options: FilterPanelOptions): FilterPanelContr
     current = { ...current, favoriteRefreshRequestedAt: refreshRequestedAt };
     workState = { ...workState, phase: 'updating' };
     renderFavoriteControls();
-    try {
-      const pending = options.onChange?.(current);
-
-      void Promise.resolve(pending).catch(() => {
-        if (current.favoriteRefreshRequestedAt === refreshRequestedAt) { workState = { ...workState, phase: 'error', errorStage: 'preferences' }; renderFavoriteControls(); }
-      });
-    } catch {
-      workState = { ...workState, phase: 'error', errorStage: 'preferences' };
-      renderFavoriteControls();
-    }
+    void persistCurrent();
   });
   favoriteTags.addEventListener('click', () => { void showFavoriteTags(); });
   favoriteTagsClose.addEventListener('click', closeDialog);

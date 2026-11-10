@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import comments from '../fixtures/core-comments.json';
 import xml from '../fixtures/core-danmaku.xml?raw';
-import { adaptCommentPayload } from '../../src/page/comment-adapter';
+import { adaptCommentPayload, adaptCommentResponse } from '../../src/page/comment-adapter';
 import { adaptDanmakuResponse } from '../../src/page/danmaku-adapter';
 import { adaptDynamicPayload } from '../../src/page/dynamic-adapter';
 import { matchSupportedRoute } from '../../src/routes/match';
@@ -23,7 +23,7 @@ describe('runtime adapters', () => {
   });
 
   it('validates the small bridge protocol without carrying arbitrary fields', () => {
-    const message = { type: 'time-filter/config-update' as const, config };
+    const message = { type: 'time-filter/config-update' as const, config: { ...config, favoriteFolderUid: '7' } };
     const encoded = serializeBridgeMessage(message);
     expect(parseBridgeMessage(encoded)).toEqual(message);
     expect(isBridgeMessage({ type: 'time-filter/notice', reason: 'parse-failed', message: 'safe' })).toBe(true);
@@ -33,8 +33,8 @@ describe('runtime adapters', () => {
 
   it('persists normalized configuration through an injected storage adapter', async () => {
     const store = createConfigStore(createMemoryConfigStorage());
-    await store.saveConfig({ cutoffMinute: '2026-09-22T12:30', enabled: true, supplementBudget: 999, debug: true });
-    expect(await store.loadConfig()).toMatchObject({ cutoffMinute: '2026-09-22T12:30', enabled: true, supplementBudget: 100, debug: true });
+    await store.saveConfig({ cutoffMinute: '2026-09-22T12:30', enabled: true, supplementBudget: 999, debug: true, favoriteFolderUid: '7' });
+    expect(await store.loadConfig()).toMatchObject({ cutoffMinute: '2026-09-22T12:30', enabled: true, supplementBudget: 100, debug: true, favoriteFolderUid: '7' });
     await store.clearConfig();
     expect(await store.loadConfig()).toMatchObject(config);
   });
@@ -77,6 +77,27 @@ describe('runtime adapters', () => {
     expect(result.payload.data.all_count).toBe(4);
     expect(result.payload.data.cursor).toEqual({ next: 2 });
     expect(result.payload.data.replies.map((comment: { rpid: number }) => comment.rpid)).toEqual([2]);
+  });
+
+  it.each([adaptCommentPayload, adaptCommentResponse])('过滤所有并存评论列表及子回复，保留分页信息与输入', (adapt) => {
+    const list = [
+      { rpid: 1, ctime: 1759999000, replies: [{ rpid: 11, ctime: 1759999000 }, { rpid: 12, ctime: 1760000060 }] },
+      { rpid: 2, ctime: 1760000060 },
+      { rpid: 3, ctime: 1760000100, replies: [{ rpid: 31, ctime: 1759999000 }] },
+      { rpid: 4 },
+    ];
+    const response = { code: 0, data: { replies: list, top_replies: list, comments: list, repliesList: list, all_count: 99, cursor: { next: 2 } } };
+    const result = adapt(response, { cutoff: 1760000060, enabled: true, nowSeconds: 1760000200 });
+    expect(result).toMatchObject({ handled: true, totalCount: 28, visibleCount: 8, hiddenCount: 20 });
+    for (const key of ['replies', 'top_replies', 'comments', 'repliesList'] as const) {
+      expect(result.payload.data[key]).toEqual([{ rpid: 1, ctime: 1759999000, replies: [{ rpid: 11, ctime: 1759999000 }] }]);
+      expect(response.data[key]).toHaveLength(4);
+    }
+    expect(result.payload.data.all_count).toBe(99);
+    expect(result.payload.data.cursor).toEqual({ next: 2 });
+    const disabled = adapt(response, { cutoff: 1760000060, enabled: false });
+    expect(disabled.payload).toEqual(response);
+    expect(disabled.hiddenCount).toBe(0);
   });
 
   it('reports before/after counts for comment, dynamic and native-date helpers', () => {

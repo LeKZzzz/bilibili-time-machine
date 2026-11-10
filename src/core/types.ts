@@ -17,6 +17,8 @@ export interface FilterConfig {
   /** 首页收藏标签补位（默认关闭）。 */
   favoriteHomeFillEnabled?: boolean;
   favoriteFolderIds?: string[];
+  /** 收藏来源选择所属账号；旧配置需重新选择以确定账号。 */
+  favoriteFolderUid?: string | null;
   favoriteFolderLimit?: number;
   favoriteVideoLimit?: number;
   favoriteRefreshRequestedAt?: number | null;
@@ -30,6 +32,11 @@ export interface FavoriteFolderOption {
   isDefault?: boolean;
 }
 
+export interface FavoriteFolderList {
+  uid: string;
+  folders: FavoriteFolderOption[];
+}
+
 export const DEFAULT_FILTER_CONFIG: Readonly<FilterConfig> = {
   cutoffMinute: null,
   enabled: false,
@@ -40,6 +47,7 @@ export const DEFAULT_FILTER_CONFIG: Readonly<FilterConfig> = {
   autoAdvanceBaseCutoffMinute: null,
   favoriteHomeFillEnabled: false,
   favoriteFolderIds: [],
+  favoriteFolderUid: null,
   favoriteFolderLimit: 3,
   favoriteVideoLimit: 50,
   favoriteRefreshRequestedAt: null,

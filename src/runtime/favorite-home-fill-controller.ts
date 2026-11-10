@@ -8,7 +8,7 @@ import {
 
 export interface FavoriteHomeFillState {
   phase: 'idle' | 'updating' | 'searching' | 'ready' | 'filled' | 'empty' | 'error';
-  reason?: 'no-folders' | 'paused' | 'no-cutoff' | 'not-home' | 'disabled' | 'no-tags' | 'no-results';
+  reason?: 'no-folders' | 'account-changed' | 'paused' | 'no-cutoff' | 'not-home' | 'disabled' | 'no-tags' | 'no-results';
   sourceCount?: number;
   tagCount?: number;
   updatedAt?: number;
@@ -418,7 +418,7 @@ function selectedFolders(config: FavoriteHomeFillConfig): string[] {
 }
 
 function selectionKey(config: FavoriteHomeFillConfig): string {
-  return `${selectedFolders(config).join(',')}|limit=${config.favoriteFolderLimit ?? 3}|videos=${config.favoriteVideoLimit ?? 50}`;
+  return `${config.favoriteFolderUid ?? ''}|${selectedFolders(config).join(',')}|limit=${config.favoriteFolderLimit ?? 3}|videos=${config.favoriteVideoLimit ?? 50}`;
 }
 
 export function createFavoriteHomeFillController(options: FavoriteHomeFillControllerOptions): FavoriteHomeFillController {
@@ -435,7 +435,7 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
   let selectionChanged = false;
   let scrollRound = 0;
   let queuedScroll = false;
-  let knownUid: string | null = null;
+  let lastUid: string | null = null;
   let knownSnapshot: FavoriteTagSnapshot | null = null;
   let state: FavoriteHomeFillState = { phase: 'idle' };
   const request = options.fetch ?? defaultFetch(documentRef);
@@ -510,7 +510,7 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
       return;
     }
     const runAttempt = attemptKey();
-    if (lastAttempt === runAttempt) return;
+    const previousAttempt = lastAttempt;
     lastAttempt = runAttempt;
     const controller = new AbortController();
     active = controller;
@@ -533,7 +533,17 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
         const uid = readUid(await jsonFetch(request, 'https://api.bilibili.com/x/web-interface/nav', controller.signal));
         check();
         if (!uid) throw new Error('uid unavailable');
-        knownUid = uid;
+        const sameAccount = lastUid === uid;
+        lastUid = uid;
+        if (uid !== runConfig.favoriteFolderUid) {
+          knownSnapshot = null;
+          restoreAll(!config.enabled || !config.cutoffMinute);
+          lastAttempt = attemptKey();
+          publish({ phase: 'idle', reason: 'account-changed' });
+          return;
+        }
+        // 即使当前卡片批次没有变化，也先确认账号，避免同页换号后沿用旧来源。
+        if (sameAccount && previousAttempt === runAttempt) return;
         const cached = await store.getSnapshot(uid);
         check();
         knownSnapshot = cached;
@@ -742,8 +752,14 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
       const version = revision;
       if (running) await running;
       if (disposed || version !== revision) return [];
-      const uid = knownUid ?? await resolveBilibiliUid(request);
+      const uid = await resolveBilibiliUid(request);
       if (!uid || disposed || version !== revision) return [];
+      if (uid !== config.favoriteFolderUid) {
+        knownSnapshot = null;
+        restoreAll(!config.enabled || !config.cutoffMinute);
+        publish({ phase: 'idle', reason: 'account-changed' });
+        return [];
+      }
       const snapshot = await store.getSnapshot(uid);
       if (disposed || version !== revision) return [];
       return snapshot?.tags ?? [];
@@ -753,6 +769,7 @@ export function createFavoriteHomeFillController(options: FavoriteHomeFillContro
       const changedSelection = selectionKey(previous) !== selectionKey(next);
       const changed = stateKey() !== `${selectionKey(next)}|${next.enabled}|${next.cutoffMinute}|${next.favoriteHomeFillEnabled}|${next.favoriteRefreshRequestedAt ?? ''}`;
       config = { ...next };
+      if (previous.favoriteFolderUid !== next.favoriteFolderUid) knownSnapshot = null;
       if (changed) {
         const keepPreferenceRead = loadingPreferences && !changedSelection
           && previous.enabled === next.enabled

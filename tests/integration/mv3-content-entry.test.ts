@@ -73,6 +73,6 @@ describe('MV3 content entry', () => {
     await vi.waitFor(() => expect(late.hidden).toBe(false));
     expect(late.hasAttribute('data-time-filter-hidden')).toBe(false);
     expect(unknown.hidden).toBe(false);
-    expect(set).toHaveBeenCalled();
+    await vi.waitFor(() => expect(set).toHaveBeenCalled());
   });
 });

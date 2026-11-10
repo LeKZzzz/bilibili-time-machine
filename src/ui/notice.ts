@@ -28,7 +28,7 @@ export function createNoticeManager(options: NoticeOptions = {}): NoticeManager 
   const root = doc.createElement('div');
   root.id = NOTICE_ROOT_ID;
   root.setAttribute('aria-live', 'polite');
-  root.style.cssText = 'position:fixed;z-index:2147483647;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;max-width:min(360px,calc(100vw - 32px));font:14px/1.55 "Noto Sans SC","Microsoft YaHei",sans-serif;';
+  root.style.cssText = 'position:fixed;z-index:2147483645;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;max-width:min(360px,calc(100vw - 32px));font:14px/1.55 "Noto Sans SC","Microsoft YaHei",sans-serif;';
   doc.documentElement.append(root);
   const seen = new Set<string>();
   const timers = new Set<ReturnType<typeof setTimeout>>();

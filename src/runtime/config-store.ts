@@ -30,6 +30,7 @@ function normalizeConfig(value: unknown): FilterConfig {
       : null,
     favoriteHomeFillEnabled: candidate.favoriteHomeFillEnabled === true,
     favoriteFolderIds: Array.isArray(candidate.favoriteFolderIds) ? candidate.favoriteFolderIds.filter((id): id is string => typeof id === 'string').slice(0, 10) : [],
+    favoriteFolderUid: typeof candidate.favoriteFolderUid === 'string' && candidate.favoriteFolderUid ? candidate.favoriteFolderUid : null,
     favoriteFolderLimit: Number.isFinite(candidate.favoriteFolderLimit) ? Math.min(10, Math.max(1, Math.trunc(candidate.favoriteFolderLimit as number))) : 3,
     favoriteVideoLimit: Number.isFinite(candidate.favoriteVideoLimit) ? Math.min(200, Math.max(1, Math.trunc(candidate.favoriteVideoLimit as number))) : 50,
     favoriteRefreshRequestedAt: Number.isFinite(candidate.favoriteRefreshRequestedAt) ? candidate.favoriteRefreshRequestedAt : null,

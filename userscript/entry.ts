@@ -15,6 +15,8 @@ import { isControlledPlaybackFrame, isPlaybackPage } from '../src/playback/runti
 import type { PlaybackPanelClient } from '../src/ui/playback-panel';
 
 let playback: PlaybackPanelClient | undefined;
+// 同一标签页的路由重建共用队列，避免旧页面的慢写入覆盖新设置。
+let pendingSave = Promise.resolve();
 
 const STORAGE_KEY = 'bilibili-time-filter.config.v1';
 const BRIDGE_SOURCE = 'bilibili-time-filter';
@@ -61,6 +63,7 @@ function normaliseConfig(value: unknown): FilterPanelConfig {
       ? input.autoAdvanceBaseCutoffMinute : null,
     favoriteHomeFillEnabled: input.favoriteHomeFillEnabled === true,
     favoriteFolderIds: Array.isArray(input.favoriteFolderIds) ? input.favoriteFolderIds.filter((id): id is string => typeof id === 'string').slice(0, 10) : [],
+    favoriteFolderUid: typeof input.favoriteFolderUid === 'string' && input.favoriteFolderUid ? input.favoriteFolderUid : null,
     favoriteFolderLimit: Number.isFinite(input.favoriteFolderLimit) ? Math.min(10, Math.max(1, Math.round(Number(input.favoriteFolderLimit)))) : 3,
     favoriteVideoLimit: Number.isFinite(input.favoriteVideoLimit) ? Math.min(200, Math.max(1, Math.round(Number(input.favoriteVideoLimit)))) : 50,
     favoriteRefreshRequestedAt: Number.isFinite(input.favoriteRefreshRequestedAt) ? input.favoriteRefreshRequestedAt : null,
@@ -75,12 +78,8 @@ async function readConfig(): Promise<FilterPanelConfig> {
 
 async function writeConfig(config: FilterPanelConfig): Promise<void> {
   const setValue = gmApi().setValue;
-  if (!setValue) return;
-  try {
-    await setValue(STORAGE_KEY, config);
-  } catch {
-    // 存储不可用时页面仍可继续使用当前标签页配置。
-  }
+  if (!setValue) throw new Error('GM 存储不可用');
+  await setValue(STORAGE_KEY, config);
 }
 
 function sendBridgeMessage(config: FilterPanelConfig): void {
@@ -165,8 +164,11 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
       favoriteFill?.updateConfig(current);
       nativeSearchFilter?.apply(current);
       repagination?.apply(current);
-      await writeConfig(current);
       sendBridgeMessage(current);
+      const configToSave = current;
+      // 顺序写入，避免较早的慢写入覆盖用户刚修改的设置。
+      pendingSave = pendingSave.catch(() => undefined).then(() => writeConfig(configToSave));
+      await pendingSave;
     },
   });
   panel.updateFavoriteState(favoriteFill.getState());

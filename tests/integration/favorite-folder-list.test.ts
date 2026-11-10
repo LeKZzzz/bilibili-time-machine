@@ -39,14 +39,17 @@ describe('favorite folder loader', () => {
       return response({ count: folders.length, list: folders });
     });
     const first = createFavoriteFolderLoader(request as typeof fetch, () => true);
-    await expect(first()).resolves.toEqual([
+    await expect(first()).resolves.toEqual({ uid: '7', folders: [
       { id: '1', title: '我的收藏' },
       { id: '2', title: '稍后再看' },
-    ]);
+    ] });
     expect(folderRequests(request)).toBe(1);
 
     const refreshedPage = createFavoriteFolderLoader(request as typeof fetch, () => true);
-    await expect(refreshedPage()).resolves.toHaveLength(2);
+    await expect(refreshedPage()).resolves.toEqual({ uid: '7', folders: [
+      { id: '1', title: '我的收藏' },
+      { id: '2', title: '稍后再看' },
+    ] });
     expect(folderRequests(request)).toBe(1);
     expect(request.mock.calls.some(([input]) => String(input).includes('/x/web-interface/nav'))).toBe(true);
   });
@@ -64,16 +67,16 @@ describe('favorite folder loader', () => {
     });
     const storage = memoryStorage();
     const first = createFavoriteFolderLoader(request as typeof fetch, () => true, storage);
-    await expect(first()).resolves.toEqual([{ id: '1', title: '账号七' }]);
+    await expect(first()).resolves.toEqual({ uid: '7', folders: [{ id: '1', title: '账号七' }] });
 
     uid = 8;
     const second = createFavoriteFolderLoader(request as typeof fetch, () => true, storage);
-    await expect(second()).resolves.toEqual([{ id: '9', title: '账号八' }]);
+    await expect(second()).resolves.toEqual({ uid: '8', folders: [{ id: '9', title: '账号八' }] });
     expect(folderRequests(request)).toBe(2);
 
     uid = 7;
     const cached = createFavoriteFolderLoader(request as typeof fetch, () => true, storage);
-    await expect(cached()).resolves.toEqual([{ id: '1', title: '账号七' }]);
+    await expect(cached()).resolves.toEqual({ uid: '7', folders: [{ id: '1', title: '账号七' }] });
     expect(folderRequests(request)).toBe(2);
   });
 
@@ -85,11 +88,11 @@ describe('favorite folder loader', () => {
     });
     const storage = memoryStorage();
     const first = createFavoriteFolderLoader(request as typeof fetch, () => true, storage);
-    await expect(first()).resolves.toEqual([]);
+    await expect(first()).resolves.toEqual({ uid: '7', folders: [] });
     const before = folderRequests(request);
 
     const second = createFavoriteFolderLoader(request as typeof fetch, () => true, storage);
-    await expect(second()).resolves.toEqual([]);
+    await expect(second()).resolves.toEqual({ uid: '7', folders: [] });
     expect(folderRequests(request)).toBe(before);
   });
 
@@ -104,12 +107,12 @@ describe('favorite folder loader', () => {
     });
     const storage = memoryStorage();
     const loader = createFavoriteFolderLoader(request as typeof fetch, () => true, storage);
-    await expect(loader()).resolves.toEqual([{ id: '1', title: '旧收藏夹' }]);
+    await expect(loader()).resolves.toEqual({ uid: '7', folders: [{ id: '1', title: '旧收藏夹' }] });
 
     folders = [{ id: 2, title: '新收藏夹' }];
-    await expect(loader(true)).resolves.toEqual([{ id: '2', title: '新收藏夹' }]);
+    await expect(loader(true)).resolves.toEqual({ uid: '7', folders: [{ id: '2', title: '新收藏夹' }] });
     const afterRefresh = createFavoriteFolderLoader(request as typeof fetch, () => true, storage);
-    await expect(afterRefresh()).resolves.toEqual([{ id: '2', title: '新收藏夹' }]);
+    await expect(afterRefresh()).resolves.toEqual({ uid: '7', folders: [{ id: '2', title: '新收藏夹' }] });
 
     fail = true;
     folders = [{ id: 3, title: '失败结果' }];
@@ -117,7 +120,7 @@ describe('favorite folder loader', () => {
 
     fail = false;
     const afterFailure = createFavoriteFolderLoader(request as typeof fetch, () => true, storage);
-    await expect(afterFailure()).resolves.toEqual([{ id: '2', title: '新收藏夹' }]);
+    await expect(afterFailure()).resolves.toEqual({ uid: '7', folders: [{ id: '2', title: '新收藏夹' }] });
   });
 
   it('does not send any request while the feature is disabled', async () => {
@@ -156,7 +159,7 @@ describe('favorite folder loader', () => {
     });
     const storage = memoryStorage();
     const loader = createFavoriteFolderLoader(request as typeof fetch, () => enabled, storage);
-    await expect(loader()).resolves.toEqual([{ id: '1', title: '旧收藏夹' }]);
+    await expect(loader()).resolves.toEqual({ uid: '7', folders: [{ id: '1', title: '旧收藏夹' }] });
 
     mode = 'refresh';
     enabled = true;
@@ -165,7 +168,7 @@ describe('favorite folder loader', () => {
 
     enabled = true;
     const restored = createFavoriteFolderLoader(request as typeof fetch, () => enabled, storage);
-    await expect(restored()).resolves.toEqual([{ id: '1', title: '旧收藏夹' }]);
+    await expect(restored()).resolves.toEqual({ uid: '7', folders: [{ id: '1', title: '旧收藏夹' }] });
     expect(requests).toBe(3);
   });
 
@@ -184,8 +187,8 @@ describe('favorite folder loader', () => {
       return response({ count: 1, list: [{ id: 1, title: '内存收藏夹' }] });
     });
     const loader = createFavoriteFolderLoader(request as typeof fetch, () => true, broken);
-    await expect(loader()).resolves.toEqual([{ id: '1', title: '内存收藏夹' }]);
-    await expect(loader()).resolves.toEqual([{ id: '1', title: '内存收藏夹' }]);
+    await expect(loader()).resolves.toEqual({ uid: '7', folders: [{ id: '1', title: '内存收藏夹' }] });
+    await expect(loader()).resolves.toEqual({ uid: '7', folders: [{ id: '1', title: '内存收藏夹' }] });
     expect(folderRequests(request)).toBe(1);
   });
 });
