@@ -3,6 +3,91 @@ import { createFilterPanel } from '../../src/ui/panel';
 import type { FavoriteFolderList } from '../../src/core/types';
 
 describe('createFilterPanel', () => {
+  it('带偏移的截止瞬间显示为本地输入，非时间设置保存保留原瞬间', () => {
+    const cutoff = '2026-11-01T01:00:37-05:00';
+    const onChange = vi.fn();
+    const controller = createFilterPanel({ document, config: { cutoffMinute: cutoff, enabled: true, supplementBudget: 20, debug: false }, onChange });
+    const root = controller.element.shadowRoot!;
+    const local = new Date(cutoff);
+    const expectedDate = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
+    const expectedTime = `${String(local.getHours()).padStart(2, '0')}:${String(local.getMinutes()).padStart(2, '0')}:37`;
+    expect(root.querySelector<HTMLInputElement>('#cutoff-date')!.value).toBe(expectedDate);
+    expect(root.querySelector<HTMLInputElement>('#cutoff-time')!.value).toBe(expectedTime);
+    root.querySelector<HTMLButtonElement>('#filter-control')!.click();
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ cutoffMinute: cutoff }));
+    controller.destroy();
+  });
+
+  it('保留加载前的时间草稿，配置就绪后才能应用和保存', () => {
+    let ready = false;
+    const onChange = vi.fn();
+    const config = { cutoffMinute: '2020-01-01T00:00:00', enabled: true, supplementBudget: 20, debug: false };
+    const controller = createFilterPanel({ document, config, onChange, isConfigReady: () => ready });
+    const root = controller.element.shadowRoot!;
+    const date = root.querySelector<HTMLInputElement>('#cutoff-date')!;
+    date.value = '2010-01-02';
+    date.dispatchEvent(new Event('input'));
+    root.querySelector<HTMLButtonElement>('#time-apply')!.click();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(root.querySelector('#time-draft-status')!.textContent).toBe('修改尚未应用');
+    expect(root.querySelector('#config-save-status')!.textContent).toContain('尚未读取完成');
+    root.querySelector<HTMLButtonElement>('#filter-control')!.click();
+    expect(onChange).not.toHaveBeenCalled();
+    ready = true;
+    controller.update(config);
+    expect(date.value).toBe('2010-01-02');
+    root.querySelector<HTMLButtonElement>('#time-apply')!.click();
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ cutoffMinute: '2010-01-02T00:00:00' }));
+    controller.destroy();
+  });
+
+  it('日期校验关联实际无效字段并聚焦，纠正和取消后清除错误', () => {
+    const controller = createFilterPanel({ document, config: { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false } });
+    const root = controller.element.shadowRoot!;
+    root.querySelector<HTMLButtonElement>('.toggle')!.click();
+    const date = root.querySelector<HTMLInputElement>('#cutoff-date')!;
+    const time = root.querySelector<HTMLInputElement>('#cutoff-time')!;
+    date.value = ''; time.value = '';
+    root.querySelector<HTMLButtonElement>('#time-apply')!.click();
+    expect(root.activeElement).toBe(date);
+    expect(date.getAttribute('aria-invalid')).toBe('true');
+    expect(date.getAttribute('aria-describedby')).toBe('time-draft-status');
+    expect(time.getAttribute('aria-invalid')).toBe('true');
+    date.value = '2020-01-01'; date.dispatchEvent(new Event('input'));
+    expect(date.hasAttribute('aria-invalid')).toBe(false);
+    expect(time.getAttribute('aria-invalid')).toBe('true');
+    root.querySelector<HTMLButtonElement>('#time-apply')!.click();
+    expect(root.activeElement).toBe(time);
+    time.value = '08:00:00'; time.dispatchEvent(new Event('input'));
+    expect(time.hasAttribute('aria-describedby')).toBe(false);
+    root.querySelector<HTMLButtonElement>('#time-cancel')!.click();
+    expect(date.hasAttribute('aria-describedby')).toBe(false);
+    expect(root.querySelector('#time-draft-status')!.textContent).toBe('');
+    controller.destroy();
+  });
+
+  it('提示允许指针移入，Escape只关闭提示，随后可以关闭面板', () => {
+    vi.useFakeTimers();
+    const controller = createFilterPanel({ document, config: { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false } });
+    const root = controller.element.shadowRoot!;
+    root.querySelector<HTMLButtonElement>('.toggle')!.click();
+    const help = root.querySelector<HTMLElement>('[data-help="favorite-enabled"]')!;
+    const tooltip = root.querySelector<HTMLElement>('#setting-tooltip')!;
+    help.dispatchEvent(new MouseEvent('mouseenter'));
+    help.dispatchEvent(new MouseEvent('mouseleave'));
+    vi.advanceTimersByTime(100);
+    tooltip.dispatchEvent(new MouseEvent('mouseenter'));
+    vi.advanceTimersByTime(1000);
+    expect(tooltip.hidden).toBe(false);
+    help.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(tooltip.hidden).toBe(true);
+    expect(root.querySelector<HTMLElement>('.card')!.hidden).toBe(false);
+    help.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(root.querySelector<HTMLElement>('.card')!.hidden).toBe(true);
+    controller.destroy();
+    vi.useRealTimers();
+  });
+
   it('keeps applied settings usable after a failed save and retries the latest settings', async () => {
     const onChange = vi.fn().mockRejectedValueOnce(new Error('存储不可用')).mockResolvedValue(undefined);
     const controller = createFilterPanel({ document,

@@ -46,12 +46,18 @@ describe('MV3 content entry', () => {
 
     const set = vi.fn(async () => undefined);
     const remove = vi.fn(async () => undefined);
+    let resolveConfig!: (value: { cutoffMinute: string; enabled: boolean; supplementBudget: number; debug: boolean }) => void;
+    const configRead = new Promise<{ cutoffMinute: string; enabled: boolean; supplementBudget: number; debug: boolean }>((resolve) => {
+      resolveConfig = resolve;
+    });
+    const get = vi.fn((key: string) => key === STORAGE_KEY
+      ? configRead.then(value => ({ [STORAGE_KEY]: value }))
+      : Promise.resolve({}));
+    const post = vi.spyOn(window, 'postMessage');
     vi.stubGlobal('chrome', {
       storage: {
         local: {
-          get: async () => ({
-            [STORAGE_KEY]: { cutoffMinute: CUTOFF, enabled: true, supplementBudget: 20, debug: false },
-          }),
+          get,
           set,
           remove,
         },
@@ -61,10 +67,29 @@ describe('MV3 content entry', () => {
     vi.resetModules();
     await import('../../src/runtime/mv3-content');
 
+    const cutoffDate = panelControl<HTMLInputElement>('#cutoff-date');
+    cutoffDate.value = '2024-01-01';
+    cutoffDate.dispatchEvent(new Event('input', { bubbles: true }));
+    panelControl<HTMLButtonElement>('#time-apply').click();
+    expect(cutoffDate.value).toBe('2024-01-01');
+    expect(panelControl('#time-draft-status').textContent).toBe('修改尚未应用');
+    expect(panelControl<HTMLElement>('#config-save-feedback').hidden).toBe(false);
+    expect(panelControl('#config-save-status').textContent).toContain('设置尚未读取完成');
+    expect(set).not.toHaveBeenCalled();
+    expect(post.mock.calls.filter(([message]) => (message as { type?: string }).type === 'time-filter/config-update')).toHaveLength(0);
+
+    resolveConfig({ cutoffMinute: CUTOFF, enabled: true, supplementBudget: 20, debug: false });
+
     await vi.waitFor(() => expect(late.getAttribute('data-time-filter-hidden')).toBe('1'));
+    expect(cutoffDate.value).toBe('2024-01-01');
+    expect(panelControl('#time-draft-status').textContent).toBe('修改尚未应用');
     expect(late.hidden).toBe(true);
     expect(unknown.hidden).toBe(true);
-    expect(early.hidden).toBe(false);
+    await vi.waitFor(() => expect(early.hidden).toBe(false));
+
+    panelControl<HTMLButtonElement>('#time-apply').click();
+    await vi.waitFor(() => expect(set).toHaveBeenCalledOnce());
+    expect(panelControl('#time-draft-status').textContent).toBe('时间已应用');
 
     const enabled = panelControl<HTMLInputElement>('#enabled');
     enabled.checked = false;

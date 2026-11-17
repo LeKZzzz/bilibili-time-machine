@@ -71,8 +71,41 @@ interface RepaginationState {
   regions: RepaginationRegion[];
 }
 
+interface SearchResultCache {
+  itemsByPage: Map<number, SearchItemInput[]>;
+  rawById: Map<string, unknown>;
+  observedPages: number | null;
+  probing: boolean;
+}
+
 const CONTROLLER_KEY = '__bilibiliTimeFilterSearchRepaginationController';
 const MAX_REGIONS = 4;
+const SIGNATURE_SEARCH_PARAMS = new Set([
+  'w_rid', 'wts', 'token', 'dm_img_list', 'dm_img_str', 'dm_cover_img_str', 'dm_img_inter',
+]);
+const TRANSIENT_SEARCH_PARAMS = new Set([
+  'page', 'pn', 'o', 'page_size', ...SIGNATURE_SEARCH_PARAMS,
+  'dynamic_offset', 'web_roll_page', 'spm_id_from', 'from_source', 'search_source', 'trackid',
+  '__refresh__', '_extra', 'context', 'highlight', 'single_column', 'platform', 'search_type',
+  // 页面访问标识及实测 API 请求元数据不改变视频筛选条件。
+  'vt', 'ad_resource', 'from_spmid', 'web_location', 'source_tag', 'qv_id', 'gaia_vtoken',
+  'x-bili-device-req-json', 'x-bili-locale-json',
+]);
+// B站视频搜索接口会显式发送这些无筛选效果的默认条件。
+const DEFAULT_SEARCH_PARAMS: Record<string, string> = {
+  keyword: '',
+  order: 'totalrank',
+  order_sort: '0',
+  duration: '0',
+  tids: '0',
+  tids_1: '0',
+  tids_2: '0',
+  user_type: '0',
+  copy_right: '0',
+  category_id: '0',
+  pubtime_begin_s: '0',
+  pubtime_end_s: '0',
+};
 
 function toPositiveInt(value: unknown): number | null {
   const numeric = typeof value === 'number'
@@ -112,23 +145,51 @@ export function collectSearchPayload(payload: unknown): { items: unknown[]; page
   return { items: [], page: null, numPages: null };
 }
 
+function stableSearchQuery(params: URLSearchParams): string {
+  const entries = Array.from(params.entries())
+    .filter(([name, value]) => {
+      if (TRANSIENT_SEARCH_PARAMS.has(name)) return false;
+      // 仅已知筛选项的空值和默认值等同省略；未知参数（含空值）仍参与隔离。
+      return !Object.hasOwn(DEFAULT_SEARCH_PARAMS, name) || (value !== '' && value !== DEFAULT_SEARCH_PARAMS[name]);
+    })
+    .sort(([nameA, valueA], [nameB, valueB]) => nameA.localeCompare(nameB) || valueA.localeCompare(valueB));
+  return new URLSearchParams(entries).toString();
+}
+
+function isVideoSearchType(params: URLSearchParams): boolean {
+  return params.getAll('search_type').every((value) => value === 'video');
+}
+
 /** 从当前搜索页 URL 读取页码、关键字、稳定键和原始 page 参数。 */
 export function readSearchLocation(location: Location): { page: number; keyword: string; key: string; pageParam: string } {
   const params = new URLSearchParams(location.search);
   const page = toPositiveInt(params.get('page')) ?? 1;
   const keyword = params.get('keyword') ?? '';
-  const transient = new Set(['page', 'o', 'w_rid', 'wts', 'dynamic_offset', 'web_roll_page']);
-  const stableQuery = Array.from(params.entries())
-    .filter(([name]) => !transient.has(name))
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, value]) => `${name}=${value}`)
-    .join('&');
   return {
     page,
     keyword,
-    key: `${location.host}${location.pathname}|${stableQuery}`,
+    key: `${location.host}${location.pathname}|${stableSearchQuery(params)}`,
     pageParam: params.get('page') ?? '',
   };
+}
+
+function readSearchRequest(url: string, pageLocation: Location): { page: number; key: string } | null {
+  try {
+    const request = new URL(url, pageLocation.href);
+    const requestParams = request.searchParams;
+    const pageParams = new URLSearchParams(pageLocation.search);
+    if (!/(?:^|\/)(?:wbi\/)?search\/(?:type|all\/v2)(?:\/|$)/i.test(request.pathname)
+      || !(request.hostname === 'bilibili.com' || request.hostname.endsWith('.bilibili.com'))
+      || !isVideoSearchType(requestParams)
+      || !isVideoSearchType(pageParams)
+      || stableSearchQuery(requestParams) !== stableSearchQuery(pageParams)) return null;
+    return {
+      page: toPositiveInt(requestParams.get('page') ?? requestParams.get('pn')) ?? 1,
+      key: readSearchLocation(pageLocation).key,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function extractItems(payload: unknown, page: number): { items: SearchItemInput[]; raw: unknown[] } {
@@ -189,20 +250,23 @@ export function createNativePageDriver(target: Window, documentRef: Document): (
     return null;
   };
   return async (page: number): Promise<boolean> => {
+    const searchKey = readSearchLocation(target.location).key;
+    const isSameSearch = (): boolean => readSearchLocation(target.location).key === searchKey;
     const control = findControl(page);
     if (control) {
       control.click();
       await wait(500);
-      return true;
+      return isSameSearch();
     }
     try {
+      if (!isSameSearch()) return false;
       const url = new URL(target.location.href);
-      if (url.searchParams.has('w_rid') || url.searchParams.has('wts') || url.searchParams.has('token')) return false;
+      if (Array.from(url.searchParams.keys()).some((name) => SIGNATURE_SEARCH_PARAMS.has(name))) return false;
       url.searchParams.set('page', String(page));
       target.history.pushState({}, '', url.toString());
       target.dispatchEvent(new PopStateEvent('popstate'));
       await wait(500);
-      return true;
+      return isSameSearch();
     } catch {
       return false;
     }
@@ -268,12 +332,10 @@ export function createSearchRepagination(options: SearchRepaginationOptions = {}
   const readPageCountFn = options.readPageCount ?? readPageCount;
   const footerWriter = options.writeFooter ?? writeSearchFooter;
 
-  const itemsByPage = new Map<number, SearchItemInput[]>();
-  const rawById = new Map<string, unknown>();
   const stateMap = stateStore(target);
-  let observedPages: number | null = null;
+  let currentCacheKey: string | null = null;
+  let currentCache: SearchResultCache | null = null;
   let config: FilterConfig = { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false };
-  let probing = false;
   let destroyed = false;
 
   const location = (): Location | null => target?.location ?? null;
@@ -284,11 +346,26 @@ export function createSearchRepagination(options: SearchRepaginationOptions = {}
     return loc.hostname === 'search.bilibili.com' || loc.pathname === '/all' || loc.pathname.startsWith('/search');
   };
 
+  const activateCache = (key: string): SearchResultCache => {
+    if (currentCacheKey === key && currentCache) return currentCache;
+    currentCacheKey = key;
+    currentCache = { itemsByPage: new Map(), rawById: new Map(), observedPages: null, probing: false };
+    stateMap.clear();
+    return currentCache;
+  };
+
+  const isCurrentSearch = (key: string, cache?: SearchResultCache): boolean => {
+    const loc = location();
+    return Boolean(loc && currentCacheKey === key && (!cache || currentCache === cache) && readSearchLocation(loc).key === key);
+  };
+
+  const activeCache = (): SearchResultCache => currentCache!;
+
   const capacity = (): number => {
     const fromDom = readPageSizeFn(documentRef as Document);
     if (fromDom) return fromDom;
     let observed = 0;
-    for (const items of itemsByPage.values()) observed = Math.max(observed, items.length);
+    for (const items of activeCache().itemsByPage.values()) observed = Math.max(observed, items.length);
     return observed > 0 ? observed : SEARCH_PAGE_SIZE_FALLBACK;
   };
 
@@ -303,21 +380,23 @@ export function createSearchRepagination(options: SearchRepaginationOptions = {}
   };
 
   const storePayload = (page: number, payload: unknown): void => {
+    const cache = activeCache();
     const meta = collectSearchPayload(payload);
     const { items, raw } = extractItems(payload, page);
-    if (meta.numPages !== null) observedPages = observedPages === null ? meta.numPages : Math.max(observedPages, meta.numPages);
+    if (meta.numPages !== null) cache.observedPages = cache.observedPages === null ? meta.numPages : Math.max(cache.observedPages, meta.numPages);
     if (items.length === 0) return;
-    itemsByPage.set(page, items);
+    cache.itemsByPage.set(page, items);
     items.forEach((entry, index) => {
       // 去重时保留首次出现的原始条目，避免后续页覆盖前页的载荷引用。
-      if (!rawById.has(entry.id)) rawById.set(entry.id, raw[index]);
+      if (!cache.rawById.has(entry.id)) cache.rawById.set(entry.id, raw[index]);
     });
   };
 
   const buildSnapshots = (startPage: number, endPage: number): SearchPageSnapshot[] => {
+    const cache = activeCache();
     const snapshots: SearchPageSnapshot[] = [];
     for (let page = startPage; page <= endPage; page += 1) {
-      const items = itemsByPage.get(page);
+      const items = cache.itemsByPage.get(page);
       if (items) snapshots.push({ page, items });
     }
     return snapshots;
@@ -336,7 +415,8 @@ export function createSearchRepagination(options: SearchRepaginationOptions = {}
   );
 
   const slicePayload = (payload: unknown, ids: readonly string[], summary: { total: number; pages: number }): unknown => {
-    const selected = ids.map((id) => rawById.get(id)).filter((item): item is unknown => item !== undefined);
+    const cache = activeCache();
+    const selected = ids.map((id) => cache.rawById.get(id)).filter((item): item is unknown => item !== undefined);
     return replaceSearchPayloadSummary(replaceSearchPayloadItems(payload, selected), summary);
   };
 
@@ -352,8 +432,8 @@ export function createSearchRepagination(options: SearchRepaginationOptions = {}
   });
 
   /** 恢复用户原始 URL 的 page 参数，避免探测留下的页码。 */
-  const restoreUrl = (pageParam: string): void => {
-    if (!target) return;
+  const restoreUrl = (key: string, pageParam: string, cache: SearchResultCache): void => {
+    if (!target || !isCurrentSearch(key, cache)) return;
     try {
       const url = new URL(target.location.href);
       const current = url.searchParams.get('page') ?? '';
@@ -366,48 +446,54 @@ export function createSearchRepagination(options: SearchRepaginationOptions = {}
     }
   };
 
-  const waitForPage = async (page: number, timeoutMs = 2000): Promise<boolean> => {
+  const waitForPage = async (page: number, key: string, cache: SearchResultCache, timeoutMs = 2000): Promise<boolean> => {
     const start = now();
     const maxAttempts = 40;
-    for (let attempt = 0; attempt < maxAttempts && !destroyed; attempt += 1) {
-      if (itemsByPage.has(page)) return true;
+    for (let attempt = 0; attempt < maxAttempts && !destroyed && isCurrentSearch(key, cache); attempt += 1) {
+      if (activeCache().itemsByPage.has(page)) return true;
       if (now() - start >= timeoutMs) break;
       await new Promise((resolve) => target?.setTimeout(resolve, 100));
     }
-    return itemsByPage.has(page);
+    return !destroyed && isCurrentSearch(key, cache) && activeCache().itemsByPage.has(page);
   };
 
   const regionFor = (state: RepaginationState, page: number): RepaginationRegion | undefined =>
     state.regions.find((region) => page >= region.anchorPage && page <= region.endPage);
 
-  const runProbe = async (anchorPage: number, key: string, pageParam: string): Promise<void> => {
-    if (probing || destroyed) return;
-    probing = true;
+  const runProbe = async (anchorPage: number, key: string, pageParam: string, cache: SearchResultCache): Promise<void> => {
+    if (cache.probing || destroyed || !isCurrentSearch(key, cache)) return;
+    cache.probing = true;
     try {
-      const totalKnown = readPageCountFn(documentRef as Document) ?? observedPages;
+      const totalKnown = readPageCountFn(documentRef as Document) ?? cache.observedPages;
       const cap = capacity();
       const state = stateMap.get(key) ?? { key, regions: [] };
       let lastPage = anchorPage;
       let probed = 0;
       let confirmedEnd = false;
       const half = Math.ceil(cap / 2);
-      while (probed < SEARCH_PAGE_PROBE_LIMIT && !confirmedEnd && !destroyed) {
+      while (probed < SEARCH_PAGE_PROBE_LIMIT && !confirmedEnd && !destroyed && isCurrentSearch(key, cache)) {
         // 判断是否还需要继续：首个稀疏页看原页可见数；后续页看重排后最后一页
         // 是否低于半页（“中间页尽量至少半页，确认无更多结果时末页可不足半页”）。
         const needsMore = lastPage === anchorPage
-          ? needsRepagination(countVisible(itemsByPage.get(anchorPage) ?? []), cap)
+          ? needsRepagination(countVisible(activeCache().itemsByPage.get(anchorPage) ?? []), cap)
           : lastAllocatedCount(buildPlan(anchorPage, lastPage, cap)) < half;
         if (!needsMore) break;
         const nextPage = lastPage + 1;
         if (totalKnown !== null && nextPage > totalKnown) { confirmedEnd = true; break; }
         const ok = await requestPage(nextPage);
-        if (destroyed) return;
-        if (!ok || !(await waitForPage(nextPage))) { notify('repagination-failed'); break; }
-        const items = itemsByPage.get(nextPage);
+        if (destroyed || !isCurrentSearch(key, cache)) return;
+        if (!ok || !(await waitForPage(nextPage, key, cache))) {
+          if (isCurrentSearch(key, cache)) notify('repagination-failed');
+          break;
+        }
+        if (!isCurrentSearch(key, cache)) return;
+        const items = activeCache().itemsByPage.get(nextPage);
         if (!items || items.length === 0) { confirmedEnd = true; break; }
         lastPage = nextPage;
         probed += 1;
       }
+
+      if (destroyed || !isCurrentSearch(key, cache)) return;
 
       const existing = regionFor(state, anchorPage);
       if (existing) {
@@ -440,12 +526,15 @@ export function createSearchRepagination(options: SearchRepaginationOptions = {}
         });
       }
       // 扫描后回到用户原始页并恢复 URL；B 站重新请求该页时返回补齐后的切片。
-      if (lastPage !== anchorPage) await requestPage(anchorPage);
-      restoreUrl(pageParam);
+      if (lastPage !== anchorPage) {
+        await requestPage(anchorPage);
+        if (!isCurrentSearch(key, cache)) return;
+      }
+      restoreUrl(key, pageParam, cache);
     } catch {
-      notify('repagination-failed');
+      if (isCurrentSearch(key, cache)) notify('repagination-failed');
     } finally {
-      probing = false;
+      cache.probing = false;
     }
   };
 
@@ -460,11 +549,15 @@ export function createSearchRepagination(options: SearchRepaginationOptions = {}
 
       const loc = location();
       if (!loc) return undefined;
-      const { page: urlPage, key, pageParam } = readSearchLocation(loc);
+      const { page: locationPage, key, pageParam } = readSearchLocation(loc);
+      const request = readSearchRequest(url, loc);
+      if (!request || request.key !== key) return undefined;
       const meta = collectSearchPayload(payload);
       // 只处理可识别的搜索响应；其它视频响应（相关推荐、详情等）直接放行。
       if (meta.items.length === 0) return undefined;
-      const page = meta.page ?? urlPage;
+      if (meta.page !== null && meta.page !== request.page) return undefined;
+      const page = request.page;
+      const cache = activateCache(key);
       storePayload(page, payload);
 
       const state = stateMap.get(key);
@@ -480,9 +573,9 @@ export function createSearchRepagination(options: SearchRepaginationOptions = {}
       }
 
       const cap = capacity();
-      const currentItems = itemsByPage.get(page) ?? [];
-      if (!probing && !region && needsRepagination(countVisible(currentItems), cap)) {
-        void runProbe(page, key, pageParam);
+      const currentItems = activeCache().itemsByPage.get(page) ?? [];
+      if (page === locationPage && !cache.probing && !region && needsRepagination(countVisible(currentItems), cap)) {
+        void runProbe(page, key, pageParam, cache);
       }
       return undefined;
     },

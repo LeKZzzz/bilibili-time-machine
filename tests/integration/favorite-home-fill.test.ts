@@ -26,6 +26,26 @@ function scrollTo(position: number): void {
   window.dispatchEvent(new Event('scroll'));
 }
 
+function colorChannels(value: string): number[] {
+  const hex = value.match(/^#([\da-f]{3}|[\da-f]{6})$/i)?.[1];
+  if (hex) {
+    const digits = hex.length === 3 ? [...hex].map((digit) => `${digit}${digit}`).join('') : hex;
+    return [0, 2, 4].map((index) => Number.parseInt(digits.slice(index, index + 2), 16));
+  }
+  const rgb = value.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (rgb) return rgb.slice(1, 4).map(Number);
+  throw new Error(`Unsupported CSS color: ${value}`);
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const luminance = (color: string): number => colorChannels(color)
+    .map((channel) => channel / 255)
+    .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index]!, 0);
+  const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (values[0]! + 0.05) / (values[1]! + 0.05);
+}
+
 /** 与控制器写入的快照一致，附带每夹视频上限标记。 */
 function cachedSnapshot(folders: string[], videos: FavoriteVideo[], videoLimit = 1) {
   return { ...createFavoriteSnapshot('7', folders, videos), videoLimit };
@@ -322,6 +342,10 @@ describe('favorite home fill search lifecycle', () => {
     expect(searches).toEqual(['a', 'b', 'c']);
     expect(Array.from(document.querySelectorAll('[data-favorite-home-fill-label]')).map((node) => node.textContent))
       .toEqual(['来自收藏偏好：a', '来自收藏偏好：b', '来自收藏偏好：c']);
+    const marker = document.querySelector<HTMLElement>('[data-favorite-home-fill-label]')!;
+    expect(marker.style.backgroundColor).toBeTruthy();
+    expect(colorChannels(marker.style.backgroundColor)).toEqual([255, 255, 255]);
+    expect(contrastRatio(marker.style.color, marker.style.backgroundColor)).toBeGreaterThanOrEqual(4.5);
     expect(document.querySelector('[data-bvid="BVtemplate"]')).toBe(template);
   });
 

@@ -3,7 +3,7 @@
 export type UnixSeconds = number;
 
 export interface FilterConfig {
-  /** 本地日期时间输入，例如 2026-09-22T12:34:05；null 表示未设置。 */
+  /** 本地日期时间，例如 2026-09-22T12:34:05；重复小时可带 UTC 偏移，null 表示未设置。 */
   cutoffMinute: string | null;
   enabled: boolean;
   supplementBudget: number;
@@ -12,7 +12,7 @@ export interface FilterConfig {
   autoAdvance?: boolean;
   /** 自动推进的启动时刻，Unix 毫秒。 */
   autoAdvanceStartedAt?: number | null;
-  /** 自动推进启动时的截止时间，用于刷新页面后恢复进度。 */
+  /** 自动推进启动时的截止时间，用于刷新恢复；显式偏移会保留重复小时中的瞬间。 */
   autoAdvanceBaseCutoffMinute?: string | null;
   /** 首页收藏标签补位（默认关闭）。 */
   favoriteHomeFillEnabled?: boolean;

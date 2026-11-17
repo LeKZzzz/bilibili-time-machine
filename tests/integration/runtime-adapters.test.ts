@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createRequire } from 'node:module';
 import comments from '../fixtures/core-comments.json';
 import xml from '../fixtures/core-danmaku.xml?raw';
 import { adaptCommentPayload, adaptCommentResponse } from '../../src/page/comment-adapter';
@@ -8,6 +9,11 @@ import { matchSupportedRoute } from '../../src/routes/match';
 import { createConfigStore, createMemoryConfigStorage } from '../../src/runtime/config-store';
 import { isBridgeMessage, parseBridgeMessage, serializeBridgeMessage } from '../../src/runtime/bridge-protocol';
 import { cutoffEndSeconds, nativeStartSeconds } from '../../src/runtime/native-search-filter';
+
+type TestDom = { window: Window & typeof globalThis };
+const { JSDOM } = createRequire(import.meta.url)('jsdom') as {
+  JSDOM: new (html: string, options: { url: string }) => TestDom;
+};
 
 const config = { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false } as const;
 
@@ -29,6 +35,43 @@ describe('runtime adapters', () => {
     expect(isBridgeMessage({ type: 'time-filter/notice', reason: 'parse-failed', message: 'safe' })).toBe(true);
     expect(isBridgeMessage({ type: 'time-filter/notice', reason: 'parse-failed', message: 'https://x/?token=secret\n' })).toBe(false);
     expect(parseBridgeMessage('{"type":"unknown"}')).toBeNull();
+  });
+
+  it('accepts MV3 config updates only from the same window and origin', async () => {
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://www.bilibili.com/unmatched-route' });
+    const target = dom.window;
+    vi.stubGlobal('window', target);
+    vi.stubGlobal('document', target.document);
+    vi.stubGlobal('CustomEvent', target.CustomEvent);
+    vi.doMock('../../src/playback/bridge', () => ({ installPlaybackBridgeHost: vi.fn() }));
+    vi.doMock('../../src/page/initial-state', () => ({ scanRenderedMainVideo: vi.fn() }));
+
+    try {
+      vi.resetModules();
+      await import('../../src/runtime/mv3-main-world');
+      const config = { cutoffMinute: '2020-01-01T00:00:00', enabled: false, supplementBudget: 20, debug: false };
+      const data = { type: 'time-filter/config-update', config };
+      const pageWindow = target as unknown as Window;
+
+      target.dispatchEvent(new target.MessageEvent('message', {
+        data, origin: 'https://foreign.example', source: target,
+      }));
+      target.dispatchEvent(new target.MessageEvent('message', {
+        data, origin: target.location.origin, source: null,
+      }));
+      expect(pageWindow.__BILIBILI_TIME_FILTER_CONFIG__).toBeUndefined();
+
+      target.dispatchEvent(new target.MessageEvent('message', {
+        data, origin: target.location.origin, source: target,
+      }));
+      expect(pageWindow.__BILIBILI_TIME_FILTER_CONFIG__).toEqual(config);
+    } finally {
+      vi.doUnmock('../../src/playback/bridge');
+      vi.doUnmock('../../src/page/initial-state');
+      vi.unstubAllGlobals();
+      vi.resetModules();
+      target.close();
+    }
   });
 
   it('persists normalized configuration through an injected storage adapter', async () => {

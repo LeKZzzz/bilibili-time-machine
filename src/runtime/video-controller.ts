@@ -3,6 +3,7 @@ import type { FilterConfig, VideoRecord } from '../core/types';
 import { scanRenderedDynamics, scanRenderedMainVideo, scanRenderedVideoCards, type DomScanResult } from '../page/initial-state';
 import { parseDisplayedCardDate } from '../page/search-card-date';
 import { cardDecisionLog, devLog, supplementFailedLog, supplementPlanLog, supplementStartLog, supplementSuccessLog } from '../core/dev-log';
+import { readSearchLocation } from './search-repagination';
 
 export interface VideoControllerOptions {
   root?: ParentNode;
@@ -134,6 +135,7 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
   let disposed = false;
   let observer: MutationObserver | null = null;
   let activeScan: Promise<void> = Promise.resolve();
+  let budgetGeneration = 0;
   const pending = new Set<string>();
   const attempted = new Set<string>();
   const fetchVideo = options.fetchVideo;
@@ -143,7 +145,11 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
     const location = documentRef?.defaultView?.location;
     if (!location) return '';
     const params = new URLSearchParams(location.search);
-    // B 站分页同时使用 page 和 o；其余签名/展示参数不应重置当前页预算。
+    // 搜索预算随关键词和筛选条件隔离，页码变化与结果偏移仍各自重置预算。
+    if (/^(\/all|\/search|\/$)/.test(location.pathname)) {
+      const search = readSearchLocation(location);
+      return `${search.key}|page=${search.page}|o=${params.get('o') ?? ''}`;
+    }
     return `${location.pathname}|page=${params.get('page') ?? '1'}|o=${params.get('o') ?? ''}`;
   };
   const documentRef = root.nodeType === 9 ? root as Document : (root as Node).ownerDocument;
@@ -175,6 +181,7 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
     const currentPageKey = pageKey();
     if (currentPageKey !== lastPageKey) {
       lastPageKey = currentPageKey;
+      budgetGeneration += 1;
       attempted.clear();
       pending.clear();
       awaitingPageContent = true;
@@ -207,6 +214,7 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
       const remainingBudget = Math.max(0, config.supplementBudget - attempted.size);
       const plan = planVideoSupplements(records.filter((record) => !attempted.has(String(record.bvid))), remainingBudget);
       const candidates = plan.candidates.filter((candidate) => !pending.has(candidate.bvid));
+      const scanGeneration = budgetGeneration;
       candidates.forEach((candidate) => attempted.add(candidate.bvid));
       candidates.forEach((candidate) => pending.add(candidate.bvid));
       if (__TIME_FILTER_DEV__ && candidates.length > 0) {
@@ -216,7 +224,7 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
         activeScan = activeScan.then(async () => {
           const queue = candidates.slice();
           const worker = async () => {
-            while (!disposed && queue.length > 0) {
+            while (!disposed && scanGeneration === budgetGeneration && queue.length > 0) {
               const candidate = queue.shift();
               if (!candidate) return;
               if (__TIME_FILTER_DEV__) {
@@ -224,6 +232,7 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
               }
               try {
                 const fetched = await fetchVideo(candidate.bvid);
+                if (scanGeneration !== budgetGeneration) continue;
                 if (fetched) {
                   logSupplementSuccess(candidate.bvid, fetched);
                   applyFetchedRecord(root, candidate.bvid, fetched, config.cutoffMinute, config.enabled);
@@ -232,10 +241,12 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
                   notify('supplement-failed');
                 }
               } catch {
-                logSupplementFailure(candidate.bvid, 'error');
-                notify('supplement-failed');
+                if (scanGeneration === budgetGeneration) {
+                  logSupplementFailure(candidate.bvid, 'error');
+                  notify('supplement-failed');
+                }
               } finally {
-                pending.delete(candidate.bvid);
+                if (scanGeneration === budgetGeneration) pending.delete(candidate.bvid);
               }
             }
           };
@@ -254,6 +265,7 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
 
   const enqueue = async (records: readonly VideoRecord[]): Promise<void> => {
     if (!config.enabled || !config.cutoffMinute || !fetchVideo || disposed) return;
+    const enqueueGeneration = budgetGeneration;
     const remainingBudget = Math.max(0, config.supplementBudget - attempted.size);
     const plan = planVideoSupplements(records.filter((record) => !attempted.has(String(record.bvid))), remainingBudget);
     const rootRecords = plan.candidates.filter((candidate) => !pending.has(candidate.bvid));
@@ -264,7 +276,7 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
     }
     const queue = rootRecords.slice();
     const worker = async () => {
-      while (!disposed && queue.length > 0) {
+      while (!disposed && enqueueGeneration === budgetGeneration && queue.length > 0) {
         const candidate = queue.shift();
         if (!candidate) return;
         if (__TIME_FILTER_DEV__) {
@@ -272,6 +284,7 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
         }
         try {
           const fetched = await fetchVideo(candidate.bvid);
+          if (enqueueGeneration !== budgetGeneration) continue;
           if (!fetched) {
             logSupplementFailure(candidate.bvid, 'empty');
             notify('supplement-failed');
@@ -280,10 +293,12 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
             applyFetchedRecord(root, candidate.bvid, fetched, config.cutoffMinute, config.enabled);
           }
         } catch {
-          logSupplementFailure(candidate.bvid, 'error');
-          notify('supplement-failed');
+          if (enqueueGeneration === budgetGeneration) {
+            logSupplementFailure(candidate.bvid, 'error');
+            notify('supplement-failed');
+          }
         } finally {
-          pending.delete(candidate.bvid);
+          if (enqueueGeneration === budgetGeneration) pending.delete(candidate.bvid);
         }
       }
     };
@@ -292,6 +307,7 @@ export function createVideoController(options: VideoControllerOptions): VideoCon
 
   const updateConfig = (next: FilterConfig): void => {
     if (next.enabled !== config.enabled || next.cutoffMinute !== config.cutoffMinute) {
+      budgetGeneration += 1;
       attempted.clear();
       pending.clear();
     }

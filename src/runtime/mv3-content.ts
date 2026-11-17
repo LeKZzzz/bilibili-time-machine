@@ -104,11 +104,13 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     playback,
     document: documentRef,
     config: current,
+    isConfigReady: () => configReady,
     onFavoriteFoldersRefresh: loadFolders,
     onFavoriteTagsLoad: () => favoriteFill.getTags(),
     onFavoriteContinue: () => favoriteFill.continueFinding(),
     onChange: async (config) => {
-      if (!configReady) return;
+      if (!mounted) throw new Error('当前页面实例已失效，请刷新页面后重试。');
+      if (!configReady) throw new Error('过滤设置尚未读取完成，请刷新页面后重试。');
       current = resolveAutoAdvanceConfig(normaliseConfig(config));
       if (__TIME_FILTER_DEV__) devLog.log(configLog('config-changed', current, 'mv3-content'));
       controller.updateConfig(current);
@@ -125,6 +127,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   autoAdvanceTimer = window.setInterval(refreshAutoAdvance, 1_000);
 
   const onMessage = (event: MessageEvent): void => {
+    if (event.origin !== window.location.origin || event.source !== window) return;
     const data = event.data as { source?: unknown; type?: unknown; message?: unknown; reason?: unknown } | null;
     if (!data || data.type !== 'time-filter/notice') return;
     if (typeof data.message === 'string' && typeof data.reason === 'string') notices.show(data.message, data.reason);
@@ -132,6 +135,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   window.addEventListener('message', onMessage);
 
   void loadConfig().then((config) => {
+    if (!mounted) return;
     current = resolveAutoAdvanceConfig(config);
     configReady = true;
     if (__TIME_FILTER_DEV__) devLog.log(configLog('config-loaded', current, 'mv3-content'));
@@ -141,11 +145,11 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     panel?.update(current);
     send(current);
   }).catch(() => {
+    if (!mounted) return;
     if (__TIME_FILTER_DEV__) {
       devLog.log({ reason: 'config-read-failed', message: '配置读取失败', details: { source: 'mv3-content' } });
     }
     notices.show('无法读取过滤设置，内容已隐藏。请刷新页面重试。', 'config-read-failed');
-    panel?.update(pendingConfig);
   });
   return {
     destroy: () => {

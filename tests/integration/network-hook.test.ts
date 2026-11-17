@@ -64,8 +64,10 @@ class FakeXhr extends EventTarget {
 }
 
 const originalXhr = window.XMLHttpRequest;
+const originalFakeOpen = FakeXhr.prototype.open;
 afterEach(() => {
   window.XMLHttpRequest = originalXhr;
+  FakeXhr.prototype.open = originalFakeOpen;
   FakeXhr.instances.length = 0;
 });
 
@@ -79,6 +81,34 @@ function install() {
 }
 
 describe('page network hook XHR JSON responses', () => {
+  it('restores the original XHR open when its wrapper is still current', () => {
+    const originalOpen = FakeXhr.prototype.open;
+    const handle = install();
+
+    expect(FakeXhr.prototype.open).not.toBe(originalOpen);
+    handle.uninstall();
+    expect(FakeXhr.prototype.open).toBe(originalOpen);
+  });
+
+  it('uninstall preserves an XHR open wrapper installed afterward', () => {
+    const handle = install();
+    const hookOpen = FakeXhr.prototype.open;
+    const laterOpenCalled = vi.fn();
+    const laterOpen = function(this: FakeXhr, method: string, url: string | URL): void {
+      laterOpenCalled();
+      hookOpen.call(this, method, url);
+    };
+    FakeXhr.prototype.open = laterOpen;
+
+    handle.uninstall();
+
+    expect(FakeXhr.prototype.open).toBe(laterOpen);
+    const xhr = new FakeXhr();
+    xhr.open('GET', 'https://api.bilibili.com/x/v2/reply?oid=1');
+    expect(laterOpenCalled).toHaveBeenCalledOnce();
+    expect(xhr.url).toBe('https://api.bilibili.com/x/v2/reply?oid=1');
+  });
+
   it('同步过滤评论 JSON XHR 响应', () => {
     const handle = install();
     const xhr = new window.XMLHttpRequest() as unknown as FakeXhr;

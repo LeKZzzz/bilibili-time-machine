@@ -186,7 +186,8 @@ export function cloneHomeFillCard(template: Element, candidate: SearchCandidate,
   updateCardOwner(clone, candidate);
   updateCardStats(clone, candidate);
   let marker = clone.querySelector<HTMLElement>('[data-favorite-home-fill-label]');
-  if (!marker) { marker = documentRef.createElement('span'); marker.setAttribute('data-favorite-home-fill-label', '1'); marker.style.cssText = 'font-size:11px;color:#00aeec;'; clone.appendChild(marker); }
+  if (!marker) { marker = documentRef.createElement('span'); marker.setAttribute('data-favorite-home-fill-label', '1'); clone.appendChild(marker); }
+  marker.style.cssText = 'font-size:11px;color:#006b8f;background-color:#fff;';
   marker.textContent = fillLabel;
   marker.setAttribute('aria-label', sourceTag ? `根据你的收藏标签“${sourceTag}”推荐` : '来自收藏偏好');
   if (sourceTag) marker.title = `根据你的收藏标签“${sourceTag}”推荐`;
@@ -401,6 +402,7 @@ export async function loadFavoriteFolders(
     if (!isEnabled()) throw new Error('favorite folder loading disabled');
     const folders = normalizeFavoriteFolders(payload);
     const count = readFolderCount(payload);
+    if (count === 0 && folders.length === 0) return folders;
     // list-all 明确给出的数量少于 count 时不能当作完整列表，改走分页回退。
     if (folders.length > 0 && (count === null || folders.length >= count)) return folders;
   } catch {

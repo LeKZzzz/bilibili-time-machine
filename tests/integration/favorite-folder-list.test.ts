@@ -89,11 +89,27 @@ describe('favorite folder loader', () => {
     const storage = memoryStorage();
     const first = createFavoriteFolderLoader(request as typeof fetch, () => true, storage);
     await expect(first()).resolves.toEqual({ uid: '7', folders: [] });
+    expect(folderRequests(request)).toBe(1);
     const before = folderRequests(request);
 
     const second = createFavoriteFolderLoader(request as typeof fetch, () => true, storage);
     await expect(second()).resolves.toEqual({ uid: '7', folders: [] });
     expect(folderRequests(request)).toBe(before);
+  });
+
+  it('falls back when list-all returns an incomplete non-empty list', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/x/web-interface/nav')) return response({ mid: 7 });
+      if (url.pathname.endsWith('/created/list-all')) {
+        return response({ count: 2, list: [{ id: 1, title: '不完整结果' }] });
+      }
+      return response({ count: 1, list: [{ id: 2, title: '分页结果' }] });
+    });
+    const loader = createFavoriteFolderLoader(request as typeof fetch, () => true, memoryStorage());
+
+    await expect(loader()).resolves.toEqual({ uid: '7', folders: [{ id: '2', title: '分页结果' }] });
+    expect(folderRequests(request)).toBe(2);
   });
 
   it('replaces the cache only after a successful forced refresh', async () => {

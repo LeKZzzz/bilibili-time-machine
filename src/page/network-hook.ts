@@ -260,6 +260,7 @@ export function installNetworkHook(options: NetworkHookOptions = {}): NetworkHoo
   const nativeText = responseTextDescriptor?.get;
   const nativeResponse = responseDescriptor?.get;
   const xhrHooked = typeof originalOpen === 'function' && !!nativeText && !!nativeResponse;
+  let wrappedOpen: typeof XMLHttpRequest.prototype.open | undefined;
   if (xhrHooked) {
     const open = function(this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
       const requestUrl = String(url);
@@ -371,7 +372,8 @@ export function installNetworkHook(options: NetworkHookOptions = {}): NetworkHoo
       );
     };
     try {
-      Xhr.prototype.open = open as typeof Xhr.prototype.open;
+      wrappedOpen = open as typeof Xhr.prototype.open;
+      Xhr.prototype.open = wrappedOpen;
     } catch {
       notify('hook-failed', { cause: 'xhr-readonly' });
     }
@@ -390,7 +392,7 @@ export function installNetworkHook(options: NetworkHookOptions = {}): NetworkHoo
       if (!active) return;
       active = false;
       if (target.fetch === wrappedFetch) target.fetch = originalFetch;
-      if (xhrHooked && Xhr) {
+      if (xhrHooked && Xhr && Xhr.prototype.open === wrappedOpen) {
         Xhr.prototype.open = originalOpen;
       }
     },

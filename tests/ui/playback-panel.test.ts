@@ -36,13 +36,26 @@ function setup() {
 }
 
 describe('playback panel', () => {
-  it('starts independently of cutoff and announces default advertising, switches through top tabs', () => {
+  it('删除作品后聚焦相邻作品，删除最后一部后聚焦添加作品', () => {
+    const { panel, root, get } = setup();
+    while (get('works').querySelector('.playback-work')) {
+      const titles = get('works').querySelectorAll<HTMLButtonElement>('[data-work-id]');
+      const nextId = titles[1]?.dataset.workId;
+      const remove = get('works').querySelector<HTMLButtonElement>('.playback-work > button:last-child')!;
+      remove.focus(); remove.click();
+      if (nextId) expect((root.activeElement as HTMLElement).dataset.workId).toBe(nextId);
+      else expect(root.activeElement).toBe(get('add-work'));
+    }
+    panel.destroy();
+  });
+
+  it('starts independently of cutoff with default advertising controls, switches through top tabs', () => {
     const { panel, root, get, command, onChange, unsubscribe } = setup();
     expect(get('dialog').hidden).toBe(false);
     expect(get<HTMLInputElement>('animation-ads').checked).toBe(true);
     expect(get<HTMLInputElement>('normal-ads').checked).toBe(false);
     expect(get<HTMLInputElement>('interval').value).toBe('20');
-    expect(get('ad-notice').textContent).toContain('已开启');
+    expect(get('ad-notice').textContent).toBe('');
     get('start').click();
     expect(command).toHaveBeenCalledWith({ type: 'start' });
     expect(onChange).not.toHaveBeenCalled();
@@ -104,7 +117,7 @@ describe('playback panel', () => {
     });
     get('save').click();
     await vi.waitFor(() => expect(get('feedback').textContent).toBe('播放设置已保存'));
-    expect(get('ad-notice').textContent).toBe('动画中途插播已关闭。');
+    expect(get('ad-notice').textContent).toBe('');
     expect(get('clock').textContent).toBe('动画中途插播已关闭');
     update({ mode: 'normal', status: 'idle' });
     expect(get('clock').textContent).toContain('累计观看 1 分 5 秒');
@@ -114,7 +127,7 @@ describe('playback panel', () => {
     expect(get('ad-notice').textContent).toBe('动画中途插播将开启，保存后生效。');
     animationAds.checked = false;
     animationAds.dispatchEvent(new Event('change'));
-    expect(get('ad-notice').textContent).toBe('动画中途插播已关闭。');
+    expect(get('ad-notice').textContent).toBe('');
     panel.destroy();
   });
 
