@@ -23,7 +23,7 @@ The tool uses content still available on Bilibili. It cannot restore historical 
 
 [Installation](#installation) · [Watch animation](#watch-animation) · [Ad breaks](#configure-public-service-ads) · [Browse by date](#browse-with-a-date-in-the-past) · [Troubleshooting](#troubleshooting-and-limitations) · [Contributing](#contributing)
 
-> Version scope: this guide covers `v0.4.0` and includes unreleased fixes such as account-bound folder selections and save-failure feedback with retry. Check the corresponding [Release notes](https://github.com/LeKZzzz/bilibili-time-machine/releases) for the features in an installation package. See [Version and compatibility](#version-and-compatibility) for tested and untested scenarios.
+> Version scope: this guide covers `v0.4.1`. Version `v0.4.0` does not include account-bound folder selections, failed-save retry, or the later search and interface fixes. Check the corresponding [Release notes](https://github.com/LeKZzzz/bilibili-time-machine/releases) before installing. See [Version and compatibility](#version-and-compatibility) for tested and untested scenarios.
 
 <details>
 <summary>Preview: time filtering, Animation Time Machine, and favorites</summary>
@@ -207,11 +207,13 @@ Report problems through [GitHub Issues](https://github.com/LeKZzzz/bilibili-time
 ### Version and compatibility
 
 <details>
-<summary>v0.4.0, unreleased fixes, and compatibility checks (2026-11-10)</summary>
+<summary>v0.4.1 fixes and compatibility checks (2026-11-19)</summary>
 
 `v0.4.0` includes top-level tabs, revised copy and button layouts, the 31-show catalog, episode import and automatic completion, separate dialogs, resumable 60-second ad breaks, order changes during playback, resuming from the current page, and automatic continuation after manual episode changes. Reload the extension after updating it, then refresh Bilibili. Refresh Bilibili after updating the userscript as well.
 
-Local fixes checked on 2026-11-10 passed a fixed-directory extension upgrade that retained settings, playlists, and progress, plus account reselection, failed-save retry, and save ordering across page navigation. An installed MV3 build passed representative playback flows using controlled media fixtures; one anonymous Bilibili sample also played for about 1–3 seconds. After a persistent Tampermonkey installation in one isolated profile, two normal browser restarts both ran the script automatically and restored GM settings. The entry point also appeared on an anonymous Bilibili page after restarting. These fixes are unreleased; the public `v0.4.0` packages have not been updated with them.
+`v0.4.1` fixes isolation of search repagination and lookup budgets when search conditions change, XHR response-filtering timing, account-bound favorite sources, failed-save retry, and save ordering across page navigation. It also improves short-screen dialogs, keyboard focus, and error feedback. After upgrading from an older version, select your favorite folders again; do the same after switching Bilibili accounts. This version also removes repeated interface instructions and fixes automatic cutoff advancement during the daylight-saving fall-back hour.
+
+Fixes checked on 2026-11-10 passed a fixed-directory extension upgrade that retained settings, playlists, and progress, plus account reselection, failed-save retry, and save ordering across page navigation. An installed MV3 build passed representative playback flows using controlled media fixtures; one anonymous Bilibili sample also played for about 1–3 seconds. After a persistent Tampermonkey installation in one isolated profile, two normal browser restarts both ran the script automatically and restored GM settings. The entry point also appeared on an anonymous Bilibili page after restarting. Later fixes checked on 2026-11-17 and 2026-11-18 passed local tests, production and development builds, and relevant controlled browser checks, without new installed-playback acceptance tests. These fixes are included in `v0.4.1`; the published `v0.4.0` packages remain unchanged.
 
 Member-content playback evidence still comes from the installed Chrome extension tested on 2026-10-27, covering the episode changes, progress recovery, and member-content ad recovery available then. Complete Tampermonkey playback flows, native fullscreen on member content, and continuous buffering remain unverified in the current version. Fixtures and brief playback samples do not establish full-episode or universal source compatibility.
 
