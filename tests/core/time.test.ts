@@ -15,6 +15,19 @@ describe('core time', () => {
     expect(parseLocalMinute('2025-01-02T03:04:05')).toBe(new Date(2025, 0, 2, 3, 4, 5, 0).getTime() / 1000);
   });
 
+  it('parses explicit UTC offsets and rejects invalid offset dates and seconds', () => {
+    expect(parseLocalMinute('2025-01-02T03:04-05:00')).toBe(Date.UTC(2025, 0, 2, 8, 4) / 1000);
+    expect(parseLocalMinute('2025-01-02T03:04:05+05:30')).toBe(Date.UTC(2025, 0, 1, 21, 34, 5) / 1000);
+    expect(parseLocalMinute('2025-02-29T03:04-05:00')).toBeNull();
+    expect(parseLocalMinute('2025-04-31T03:04-05:00')).toBeNull();
+    expect(parseLocalMinute('2025-01-02T24:00-05:00')).toBeNull();
+    expect(parseLocalMinute('2025-01-02T03:04:60-05:00')).toBeNull();
+    expect(parseLocalMinute('2025-01-02T03:04+24:00')).toBeNull();
+    expect(parseLocalMinute('2025-01-02T03:04-05:60')).toBeNull();
+    expect(parseLocalMinute('2025-01-02T03:04-05')).toBeNull();
+    expect(new Date(parseLocalMinute('0001-01-02T03:04+05:30')! * 1000).toISOString()).toBe('0001-01-01T21:34:00.000Z');
+  });
+
   it('uses strict before comparison and a five-minute future clock bound', () => {
     expect(isBeforeCutoff(100, 101, { nowSeconds: 1000 })).toBe(true);
     expect(isBeforeCutoff(101, 101, { nowSeconds: 1000 })).toBe(false);

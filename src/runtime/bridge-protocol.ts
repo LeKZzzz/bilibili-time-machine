@@ -52,6 +52,7 @@ function isConfig(value: unknown): value is FilterConfig {
     (config.autoAdvanceBaseCutoffMinute === undefined || config.autoAdvanceBaseCutoffMinute === null || typeof config.autoAdvanceBaseCutoffMinute === 'string')
     && (config.favoriteHomeFillEnabled === undefined || typeof config.favoriteHomeFillEnabled === 'boolean')
     && (config.favoriteFolderIds === undefined || (Array.isArray(config.favoriteFolderIds) && config.favoriteFolderIds.every((id) => typeof id === 'string') && config.favoriteFolderIds.length <= 10))
+    && (config.favoriteFolderUid === undefined || config.favoriteFolderUid === null || typeof config.favoriteFolderUid === 'string')
     && (config.favoriteFolderLimit === undefined || (typeof config.favoriteFolderLimit === 'number' && Number.isInteger(config.favoriteFolderLimit) && config.favoriteFolderLimit >= 1 && config.favoriteFolderLimit <= 10))
     && (config.favoriteVideoLimit === undefined || (typeof config.favoriteVideoLimit === 'number' && Number.isInteger(config.favoriteVideoLimit) && config.favoriteVideoLimit >= 1 && config.favoriteVideoLimit <= 200))
     && (config.favoriteRefreshRequestedAt === undefined || config.favoriteRefreshRequestedAt === null || (typeof config.favoriteRefreshRequestedAt === 'number' && Number.isFinite(config.favoriteRefreshRequestedAt)))

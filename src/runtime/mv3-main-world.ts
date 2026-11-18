@@ -42,6 +42,7 @@ function isConfig(value: unknown): value is MainWorldConfig {
 }
 
 window.addEventListener('message', (event: MessageEvent) => {
+  if (event.origin !== window.location.origin || event.source !== window) return;
   const data = event.data as { source?: unknown; type?: unknown; config?: unknown } | null;
   if (!data) return;
   if (data.type === 'time-filter/config-update' && isConfig(data.config)) {

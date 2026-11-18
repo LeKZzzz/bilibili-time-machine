@@ -18,6 +18,13 @@ export interface PlaybackPlayer {
 type PageWindow = Window & { __playinfo__?: unknown; __INITIAL_STATE__?: unknown };
 const record = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' ? value as Record<string, unknown> : {};
+const initialErrorSnapshot = (state: unknown) => {
+  const error = record(state).error;
+  const fields = record(error);
+  return [error, fields.code, fields.trueCode, fields.message] as const;
+};
+const sameInitialError = (left: ReturnType<typeof initialErrorSnapshot>, right: ReturnType<typeof initialErrorSnapshot>) =>
+  left.every((value, index) => value === right[index]);
 
 export function findPlaybackMedia(document: Document): HTMLVideoElement | null {
   return document.querySelector<HTMLVideoElement>(
@@ -25,8 +32,8 @@ export function findPlaybackMedia(document: Document): HTMLVideoElement | null {
   );
 }
 
-export function playbackUnavailableReason(page: Window): string | null {
-  const initialError = record(record((page as PageWindow).__INITIAL_STATE__).error);
+function playbackUnavailableReasonForPage(page: Window, ignoreInitialError: boolean): string | null {
+  const initialError = ignoreInitialError ? {} : record(record((page as PageWindow).__INITIAL_STATE__).error);
   if (initialError.code === 404 || initialError.trueCode === -404) return '当前视频已失效';
   const info = record((page as PageWindow).__playinfo__);
   const result = record(info.result ?? info.data);
@@ -52,6 +59,10 @@ export function playbackUnavailableReason(page: Window): string | null {
   return null;
 }
 
+export function playbackUnavailableReason(page: Window): string | null {
+  return playbackUnavailableReasonForPage(page, false);
+}
+
 export function createPlaybackPlayer(options: {
   window?: Window;
   managed?(): boolean;
@@ -75,23 +86,41 @@ export function createPlaybackPlayer(options: {
   const routeIdentity = () => normalizePlaybackUrl(page.location.href) ?? page.location.href;
   let lastUrl = routeIdentity();
   let lastPlayinfo = (page as PageWindow).__playinfo__;
+  let lastInitialState = (page as PageWindow).__INITIAL_STATE__;
+  let lastInitialError = initialErrorSnapshot(lastInitialState);
   let stalePlayinfo: unknown;
+  let staleInitialState: unknown;
+  let staleInitialError: ReturnType<typeof initialErrorSnapshot> | undefined;
   const failedMedia = new WeakSet<HTMLVideoElement>();
   const managed = () => options.managed?.() ?? true;
   const currentFailure = () => {
     const info = (page as PageWindow).__playinfo__;
+    const initialState = (page as PageWindow).__INITIAL_STATE__;
+    const initialError = initialErrorSnapshot(initialState);
     if (lastUrl !== routeIdentity()) {
       lastUrl = routeIdentity();
       stalePlayinfo = info === lastPlayinfo ? info : undefined;
+      staleInitialState = initialState === lastInitialState ? initialState : undefined;
+      staleInitialError = sameInitialError(initialError, lastInitialError) ? initialError : undefined;
       lastFailure = null;
       held = null;
       cancelPosition();
       unconfirmedPosition = false;
     }
     lastPlayinfo = info;
+    lastInitialState = initialState;
+    lastInitialError = initialError;
     // SPA 路由先变而页面播放判定尚未替换时，不拿上一集的权限拒绝新条目。
     if (stalePlayinfo !== undefined && info === stalePlayinfo) return null;
-    return playbackUnavailableReason(page);
+    const hasStaleInitialError = staleInitialState !== undefined
+      && initialState === staleInitialState
+      && staleInitialError !== undefined
+      && sameInitialError(initialError, staleInitialError);
+    if (!hasStaleInitialError) {
+      staleInitialState = undefined;
+      staleInitialError = undefined;
+    }
+    return playbackUnavailableReasonForPage(page, hasStaleInitialError);
   };
   const reportFailure = () => {
     const reason = currentFailure();

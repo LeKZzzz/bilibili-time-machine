@@ -15,6 +15,8 @@ import { isControlledPlaybackFrame, isPlaybackPage } from '../src/playback/runti
 import type { PlaybackPanelClient } from '../src/ui/playback-panel';
 
 let playback: PlaybackPanelClient | undefined;
+// 同一标签页的路由重建共用队列，避免旧页面的慢写入覆盖新设置。
+let pendingSave = Promise.resolve();
 
 const STORAGE_KEY = 'bilibili-time-filter.config.v1';
 const BRIDGE_SOURCE = 'bilibili-time-filter';
@@ -61,6 +63,7 @@ function normaliseConfig(value: unknown): FilterPanelConfig {
       ? input.autoAdvanceBaseCutoffMinute : null,
     favoriteHomeFillEnabled: input.favoriteHomeFillEnabled === true,
     favoriteFolderIds: Array.isArray(input.favoriteFolderIds) ? input.favoriteFolderIds.filter((id): id is string => typeof id === 'string').slice(0, 10) : [],
+    favoriteFolderUid: typeof input.favoriteFolderUid === 'string' && input.favoriteFolderUid ? input.favoriteFolderUid : null,
     favoriteFolderLimit: Number.isFinite(input.favoriteFolderLimit) ? Math.min(10, Math.max(1, Math.round(Number(input.favoriteFolderLimit)))) : 3,
     favoriteVideoLimit: Number.isFinite(input.favoriteVideoLimit) ? Math.min(200, Math.max(1, Math.round(Number(input.favoriteVideoLimit)))) : 50,
     favoriteRefreshRequestedAt: Number.isFinite(input.favoriteRefreshRequestedAt) ? input.favoriteRefreshRequestedAt : null,
@@ -75,12 +78,8 @@ async function readConfig(): Promise<FilterPanelConfig> {
 
 async function writeConfig(config: FilterPanelConfig): Promise<void> {
   const setValue = gmApi().setValue;
-  if (!setValue) return;
-  try {
-    await setValue(STORAGE_KEY, config);
-  } catch {
-    // 存储不可用时页面仍可继续使用当前标签页配置。
-  }
+  if (!setValue) throw new Error('GM 存储不可用');
+  await setValue(STORAGE_KEY, config);
 }
 
 function sendBridgeMessage(config: FilterPanelConfig): void {
@@ -137,6 +136,7 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
   if (deferScan) initialScanTimer = target.setTimeout(scanInitial, 500);
   else scanInitial();
   const initialConfig = readConfig().then((config) => {
+    if (!mounted) return current;
     current = resolveAutoAdvanceConfig(config);
     configReady = true;
     if (__TIME_FILTER_DEV__) devLog.log(configLog('config-loaded', current, 'userscript'));
@@ -154,30 +154,37 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     playback,
     document: documentRef,
     config: current,
+    isConfigReady: () => configReady,
     onFavoriteFoldersRefresh: loadFolders,
     onFavoriteTagsLoad: () => favoriteFill.getTags(),
     onFavoriteContinue: () => favoriteFill.continueFinding(),
     onChange: async (config) => {
-      if (!configReady) return;
+      if (!mounted) throw new Error('当前页面实例已失效，请刷新页面后重试。');
+      if (!configReady) throw new Error('过滤设置尚未读取完成，请刷新页面后重试。');
       current = resolveAutoAdvanceConfig(normaliseConfig(config));
       if (__TIME_FILTER_DEV__) devLog.log(configLog('config-changed', current, 'userscript'));
       controller.updateConfig(current);
       favoriteFill?.updateConfig(current);
       nativeSearchFilter?.apply(current);
       repagination?.apply(current);
-      await writeConfig(current);
       sendBridgeMessage(current);
+      const configToSave = current;
+      // 顺序写入，避免较早的慢写入覆盖用户刚修改的设置。
+      pendingSave = pendingSave.catch(() => undefined).then(() => writeConfig(configToSave));
+      await pendingSave;
     },
   });
   panel.updateFavoriteState(favoriteFill.getState());
   autoAdvanceTimer = target.setInterval(refreshAutoAdvance, 1_000);
   const onMessage = (event: MessageEvent): void => {
+    if (event.origin !== target.location.origin || event.source !== target) return;
     const data = event.data as { source?: unknown; type?: unknown; message?: unknown; reason?: unknown } | null;
     if (!data || data.type !== 'time-filter/notice') return;
     if (typeof data.message === 'string' && typeof data.reason === 'string') notices.show(data.message, data.reason);
   };
   target.addEventListener('message', onMessage);
   void initialConfig.then((config) => {
+    if (!mounted) return;
     current = resolveAutoAdvanceConfig(config);
     controller.updateConfig(current);
     favoriteFill?.updateConfig(current);
@@ -186,12 +193,12 @@ function start(documentRef: Document = document, deferScan = false): { destroy: 
     panel?.update(current);
     sendBridgeMessage(current);
   }).catch(() => {
+    if (!mounted) return;
     // 配置读取失败时保持严格隐藏，并向用户提示原因。
     if (__TIME_FILTER_DEV__) {
       devLog.log({ reason: 'config-read-failed', message: '配置读取失败', details: { source: 'userscript' } });
     }
     notices.show('无法读取过滤设置，内容已隐藏。请刷新页面重试。', 'config-read-failed');
-    panel?.update(pendingConfig);
   });
   return {
     destroy: () => {

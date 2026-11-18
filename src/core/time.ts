@@ -11,9 +11,9 @@ export interface TimeValidationOptions {
 /** 将本地 datetime-local 值转换成 Unix 秒，并校验真实日历日期。 */
 export function parseLocalMinute(value: unknown): UnixSeconds | null {
   if (typeof value !== 'string') return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:([+-])(\d{2}):(\d{2}))?$/.exec(value.trim());
   if (!match) return null;
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText] = match;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, offsetSign, offsetHourText, offsetMinuteText] = match;
   const year = Number(yearText);
   const month = Number(monthText);
   const day = Number(dayText);
@@ -21,6 +21,29 @@ export function parseLocalMinute(value: unknown): UnixSeconds | null {
   const minute = Number(minuteText);
   const second = secondText === undefined ? 0 : Number(secondText);
   if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return null;
+
+  if (offsetSign !== undefined) {
+    const offsetHour = Number(offsetHourText);
+    const offsetMinute = Number(offsetMinuteText);
+    if (offsetHour > 23 || offsetMinute > 59) return null;
+
+    const date = new Date(0);
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCFullYear(year, month - 1, day);
+    date.setUTCHours(hour, minute, second, 0);
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day ||
+      date.getUTCHours() !== hour ||
+      date.getUTCMinutes() !== minute ||
+      date.getUTCSeconds() !== second
+    ) return null;
+    const offsetSeconds = (offsetHour * 60 + offsetMinute) * 60 * (offsetSign === '+' ? 1 : -1);
+    const seconds = date.getTime() / 1000 - offsetSeconds;
+    return Number.isFinite(seconds) ? seconds : null;
+  }
+
   const date = new Date(0);
   date.setHours(0, 0, 0, 0);
   date.setFullYear(year, month - 1, day);

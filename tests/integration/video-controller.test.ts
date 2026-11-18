@@ -17,6 +17,16 @@ function mountCard(bvid: string, pubdate?: number): HTMLElement {
   return card;
 }
 
+function mountLinkedCard(bvid: string): HTMLElement {
+  const card = document.createElement('div');
+  card.className = 'bili-video-card';
+  const link = document.createElement('a');
+  link.href = `https://www.bilibili.com/video/${bvid}/`;
+  card.append(link);
+  document.body.append(card);
+  return card;
+}
+
 describe('video controller', () => {
   it('fetches bounded supplement metadata from the current page origin', async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
@@ -58,6 +68,45 @@ describe('video controller', () => {
     window.history.pushState({}, '', '/');
   });
 
+  it('resets the supplement budget for search conditions but ignores signature and tracking changes', async () => {
+    document.body.innerHTML = '';
+    delete (window as Window & { __bilibiliTimeFilterPageState?: unknown }).__bilibiliTimeFilterPageState;
+    window.history.replaceState({}, '', '/all?keyword=first&order=click&page=1&w_rid=a&wts=1&spm_id_from=search');
+    mountLinkedCard('BVfirst');
+    const fetchVideo = vi.fn(async () => null);
+    const controller = createVideoController({
+      root: document,
+      config: { ...config, supplementBudget: 1 },
+      fetchVideo,
+      observe: false,
+    });
+
+    controller.scan();
+    await vi.waitFor(() => expect(fetchVideo).toHaveBeenCalledTimes(1));
+
+    window.history.replaceState({}, '', '/all?keyword=first&order=click&page=1&w_rid=b&wts=2&spm_id_from=video');
+    mountLinkedCard('BVtracking');
+    controller.scan();
+    expect(fetchVideo).toHaveBeenCalledTimes(1);
+
+    window.history.replaceState({}, '', '/all?keyword=first&order=pubdate&page=1&w_rid=c&wts=3&spm_id_from=search');
+    document.body.innerHTML = '';
+    mountLinkedCard('BVorder');
+    controller.scan();
+    await vi.waitFor(() => expect(fetchVideo).toHaveBeenCalledWith('BVorder'));
+    expect(fetchVideo).toHaveBeenCalledTimes(2);
+
+    window.history.replaceState({}, '', '/all?keyword=second&order=pubdate&page=1&w_rid=d&wts=4&spm_id_from=search');
+    document.body.innerHTML = '';
+    mountLinkedCard('BVkeyword');
+    controller.scan();
+    await vi.waitFor(() => expect(fetchVideo).toHaveBeenCalledWith('BVkeyword'));
+    expect(fetchVideo).toHaveBeenCalledTimes(3);
+
+    controller.disconnect();
+    window.history.replaceState({}, '', '/');
+  });
+
   it('does not spend the new page budget on stale cards during back navigation', async () => {
     document.body.innerHTML = '<div class="bili-video-card"><a href="//www.bilibili.com/video/BVoldpage/"></a></div>';
     const fetchVideo = vi.fn(async (bvid: string) => ({ bvid, pubdate: 1546300800 }));
@@ -82,6 +131,30 @@ describe('video controller', () => {
     expect(fetchVideo).toHaveBeenCalledTimes(3);
     controller.disconnect();
     window.history.pushState({}, '', '/');
+  });
+
+  it('访问标识和默认筛选不重置预算，非默认发布时间仍重置', async () => {
+    document.body.innerHTML = '';
+    delete (window as Window & { __bilibiliTimeFilterPageState?: unknown }).__bilibiliTimeFilterPageState;
+    window.history.replaceState({}, '', '/all?keyword=动画&page=2&o=30&vt=28028695');
+    mountLinkedCard('BVbudgetFirst');
+    const fetchVideo = vi.fn(async () => null);
+    const controller = createVideoController({ root: document, config: { ...config, supplementBudget: 1 }, fetchVideo, observe: false });
+    controller.scan();
+    await vi.waitFor(() => expect(fetchVideo).toHaveBeenCalledTimes(1));
+    window.history.replaceState({}, '', '/all?keyword=动画&page=2&o=30&vt=31482868&category_id=&pubtime_begin_s=0&pubtime_end_s=0&web_location=1430654');
+    mountLinkedCard('BVbudgetMetadata');
+    controller.scan();
+    await Promise.resolve();
+    expect(fetchVideo).toHaveBeenCalledTimes(1);
+    window.history.replaceState({}, '', '/all?keyword=动画&page=2&o=30&vt=31482868&pubtime_end_s=1577836799');
+    document.body.innerHTML = '';
+    mountLinkedCard('BVbudgetTimeFilter');
+    controller.scan();
+    await vi.waitFor(() => expect(fetchVideo).toHaveBeenCalledWith('BVbudgetTimeFilter'));
+    expect(fetchVideo).toHaveBeenCalledTimes(2);
+    controller.disconnect();
+    window.history.replaceState({}, '', '/');
   });
 
 

@@ -125,7 +125,7 @@ function asUrl(input: RequestInfo | URL): string {
   return (input as Request).url;
 }
 
-async function resolveConfig(options: NetworkHookOptions): Promise<FilterConfig> {
+function resolveConfig(options: NetworkHookOptions): FilterConfig | Promise<FilterConfig> {
   if (options.getConfig) return options.getConfig();
   if (options.config && typeof (options.config as Promise<FilterConfig>).then === 'function') return options.config;
   if (options.config) return options.config;
@@ -133,8 +133,8 @@ async function resolveConfig(options: NetworkHookOptions): Promise<FilterConfig>
 }
 
 /**
- * 内置适配器都是同步的，因此保持同步返回值可以让 XHR 的 load 监听器
- * 在同一事件循环内替换 responseText。只有调用方提供 onResponse 且返回
+ * 内置适配器都是同步的，因此 XHR 的属性读取可以在返回给页面之前完成过滤。
+ * 只有调用方提供 onResponse 且返回
  * Promise 时才会走异步分支。
  */
 function processPayload(
@@ -255,12 +255,113 @@ export function installNetworkHook(options: NetworkHookOptions = {}): NetworkHoo
 
   const Xhr = (target as Window & typeof globalThis).XMLHttpRequest;
   const originalOpen = Xhr?.prototype.open;
-  const originalSend = Xhr?.prototype.send;
-  const xhrHooked = typeof originalOpen === 'function' && typeof originalSend === 'function';
+  const responseTextDescriptor = Xhr && Object.getOwnPropertyDescriptor(Xhr.prototype, 'responseText');
+  const responseDescriptor = Xhr && Object.getOwnPropertyDescriptor(Xhr.prototype, 'response');
+  const nativeText = responseTextDescriptor?.get;
+  const nativeResponse = responseDescriptor?.get;
+  const xhrHooked = typeof originalOpen === 'function' && !!nativeText && !!nativeResponse;
+  let wrappedOpen: typeof XMLHttpRequest.prototype.open | undefined;
   if (xhrHooked) {
     const open = function(this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
       const requestUrl = String(url);
-      Object.defineProperty(this, '__timeFilterUrl', { configurable: true, value: requestUrl });
+      const controlled = isCommentUrl(requestUrl) || isDanmakuUrl(requestUrl) || isDynamicUrl(requestUrl) || isVideoResponseUrl(requestUrl);
+      // 未知配置按早于所有有效 Unix 时间的截止值隐藏已识别列表，保留响应包装与分页元数据。
+      const hiddenConfig: FilterConfig = { cutoffMinute: '0001-01-01T00:00', enabled: true, supplementBudget: 0, debug: false };
+      let configured: FilterConfig | undefined;
+      let pendingConfig: Promise<FilterConfig> | undefined;
+      let pendingNotified = false;
+      let configFailed = false;
+      let cache: { raw: unknown; key: string; value: unknown; text: string } | undefined;
+      const readConfig = (announcePending = true): FilterConfig => {
+        try {
+          const value = resolveConfig(options);
+          if (value && typeof (value as Promise<FilterConfig>).then === 'function') {
+            const promise = value as Promise<FilterConfig>;
+            if (promise !== pendingConfig) {
+              pendingConfig = promise;
+              void promise.then((config) => {
+                if (pendingConfig === promise) configured = config;
+              }, () => {
+                if (pendingConfig !== promise) return;
+                configured = undefined;
+                if (!configFailed) notify('config-read-failed', undefined, requestUrl);
+                configFailed = true;
+              });
+            }
+            if (announcePending && !configured && !configFailed && !pendingNotified) {
+              notify('config-pending', undefined, requestUrl);
+              pendingNotified = true;
+            }
+            return configured ?? hiddenConfig;
+          }
+          configured = value as FilterConfig;
+          pendingConfig = undefined;
+          return configured;
+        } catch {
+          if (!configFailed) notify('config-read-failed', undefined, requestUrl);
+          configFailed = true;
+          return hiddenConfig;
+        }
+      };
+      // 提前接收网络期间已就绪的异步配置，避免首次消费时再等待一个微任务。
+      if (controlled) readConfig(false);
+      const read = (asText: boolean): unknown => {
+        // 先调用原生 getter，保留 responseType=json 时 responseText 抛错等浏览器语义。
+        const raw = (asText ? nativeText : nativeResponse)!.call(this) as unknown;
+        const responseType = this.responseType || 'text';
+        if (!active || !controlled || (isDanmakuUrl(requestUrl)
+          ? responseType !== 'text'
+          : responseType !== 'text' && responseType !== 'json')) return raw;
+        if (this.readyState < 3) return raw;
+        const config = readConfig();
+        if (!config.enabled) {
+          if (__TIME_FILTER_DEV__) logBypassed(requestUrl);
+          return raw;
+        }
+        // 文本响应在 LOADING 阶段可能只有半份 JSON，不能向页面泄漏未过滤片段。
+        if (this.readyState !== 4) return responseType === 'json' ? null : '';
+        const key = JSON.stringify(config);
+        if (!cache || cache.raw !== raw || cache.key !== key) {
+          const current = { raw, key, value: null as unknown, text: '' };
+          cache = current;
+          const apply = (value: unknown): void => {
+            current.value = value;
+            current.text = responseType === 'json' || !isDanmakuUrl(requestUrl) ? JSON.stringify(value) : String(value);
+          };
+          try {
+            if (isDanmakuUrl(requestUrl)) {
+              const adapted = adaptDanmakuResponse(requestUrl, raw, { cutoff: config.cutoffMinute, enabled: true });
+              if (!adapted.result.ok) notify('parse-failed', { adapter: 'danmaku' }, requestUrl);
+              if (__TIME_FILTER_DEV__) logNetwork(requestUrl, 'danmaku', {
+                total: adapted.result.records.length + adapted.result.hiddenCount,
+                visible: adapted.result.records.length,
+                hidden: adapted.result.hiddenCount,
+              }, adapted.result.ok);
+              apply(adapted.result.xml);
+            } else {
+              const payload = responseType === 'json' ? raw : JSON.parse(String(raw)) as unknown;
+              // 配置未知时不调用会补请求或补内容的搜索委托。
+              const effectiveOptions = config === hiddenConfig ? { ...options, filterVideoResponse: undefined } : options;
+              const transformed = processPayload(requestUrl, payload, config, effectiveOptions, notify);
+              if (transformed && typeof (transformed as Promise<unknown>).then === 'function') {
+                apply(processPayload(requestUrl, payload, hiddenConfig, { ...options, filterVideoResponse: undefined, onResponse: undefined }, notify));
+                void (transformed as Promise<unknown>).then(apply, () => notify('parse-failed', undefined, requestUrl));
+              } else apply(transformed);
+            }
+          } catch {
+            notify('parse-failed', undefined, requestUrl);
+          }
+        }
+        return responseType === 'json' ? cache.value : cache.text;
+      };
+      try {
+        Object.defineProperties(this, {
+          responseText: { configurable: true, enumerable: responseTextDescriptor.enumerable, get: () => read(true) },
+          response: { configurable: true, enumerable: responseDescriptor.enumerable, get: () => read(false) },
+        });
+      } catch {
+        notify('hook-failed', { cause: 'xhr-response-readonly' }, requestUrl);
+      }
       return originalOpen.call(
         this,
         method,
@@ -270,105 +371,9 @@ export function installNetworkHook(options: NetworkHookOptions = {}): NetworkHoo
         (rest[2] as string | undefined) ?? '',
       );
     };
-    const send = function(this: XMLHttpRequest, ...args: unknown[]) {
-      const url = String((this as XMLHttpRequest & { __timeFilterUrl?: string }).__timeFilterUrl || '');
-      this.addEventListener('load', () => {
-        if (!active || (!isCommentUrl(url) && !isDanmakuUrl(url) && !isDynamicUrl(url) && !isVideoResponseUrl(url))) return;
-        const responseType = this.responseType || 'text';
-        // 播放器的 arraybuffer/blob 等二进制响应不可读取 responseText，直接旁路。
-        if (isDanmakuUrl(url) ? responseType !== 'text' : responseType !== 'text' && responseType !== 'json') return;
-        const rawText = responseType === 'text' ? this.responseText : '';
-        const rawResponse = this.response;
-        const replace = (value: unknown, asJsonResponse: boolean, serializeJson = false): void => {
-          const replacement = serializeJson ? JSON.stringify(value) : String(value);
-          try {
-            Object.defineProperty(this, 'responseText', { configurable: true, get: () => replacement });
-          } catch {
-            // 保持原生属性，下面仍会尝试覆盖 response。
-          }
-          try {
-            Object.defineProperty(this, 'response', {
-              configurable: true,
-              get: () => (asJsonResponse ? value : replacement),
-            });
-          } catch {
-            // 浏览器禁止实例覆盖时，保持原生 XHR。
-          }
-        };
-        const restoreRaw = (): void => {
-          try { Object.defineProperty(this, 'responseText', { configurable: true, get: () => rawText }); } catch { /* 保持原生属性 */ }
-          try { Object.defineProperty(this, 'response', { configurable: true, get: () => rawResponse }); } catch { /* 保持原生属性 */ }
-        };
-        // 配置尚未读取时先清空受控响应，避免页面在 Promise 完成前读到原始内容。
-        const pendingConfig = options.config && typeof (options.config as Promise<FilterConfig>).then !== 'function'
-          ? options.config as FilterConfig
-          : undefined;
-        if (!pendingConfig) replace('', false);
-        const applyConfigured = (configured: FilterConfig): void => {
-          if (!active) return;
-          if (!configured.enabled) {
-            if (__TIME_FILTER_DEV__) logBypassed(url);
-            restoreRaw();
-            return;
-          }
-          const empty = (): void => {
-            notify('parse-failed', undefined, url);
-            replace('', false);
-          };
-          try {
-            if (isDanmakuUrl(url)) {
-              if (this.responseType && this.responseType !== 'text') return;
-              const adapted = adaptDanmakuResponse(url, rawText, { cutoff: configured.cutoffMinute, enabled: true });
-              if (__TIME_FILTER_DEV__) {
-                logNetwork(url, 'danmaku', {
-                  total: adapted.result.records.length + adapted.result.hiddenCount,
-                  visible: adapted.result.records.length,
-                  hidden: adapted.result.hiddenCount,
-                }, adapted.result.ok);
-              }
-              if (!adapted.result.ok) {
-                empty();
-                return;
-              }
-              replace(adapted.result.xml, false);
-              return;
-            }
-
-            // B 站 JSON XHR 既可能使用默认 text 响应，也可能显式声明
-            // responseType=json。两种情况都读取对应的原始载荷。
-            if (responseType !== 'text' && responseType !== 'json') return;
-            const payload = responseType === 'json' ? rawResponse : JSON.parse(rawText) as unknown;
-            const transformed = processPayload(url, payload, configured, options, notify);
-            const apply = (value: unknown): void => replace(value, responseType === 'json', true);
-            if (transformed && typeof (transformed as PromiseLike<unknown>).then === 'function') {
-              void (transformed as PromiseLike<unknown>).then(apply, empty);
-            } else {
-              apply(transformed);
-            }
-          } catch {
-            empty();
-          }
-        };
-        if (pendingConfig) {
-          applyConfigured(pendingConfig);
-        } else {
-          void resolveConfig(options).then(applyConfigured, () => {
-            if (!active) return;
-            notify('config-read-failed', undefined, url);
-            try {
-              Object.defineProperty(this, 'responseText', { configurable: true, get: () => '' });
-              Object.defineProperty(this, 'response', { configurable: true, get: () => '' });
-            } catch {
-              // 浏览器禁止实例覆盖时保持原生 XHR。
-            }
-          });
-        }
-      }, { once: true });
-      return originalSend.call(this, ...(args as [Document | XMLHttpRequestBodyInit | null | undefined]));
-    };
     try {
-      Xhr.prototype.open = open as typeof Xhr.prototype.open;
-      Xhr.prototype.send = send as typeof Xhr.prototype.send;
+      wrappedOpen = open as typeof Xhr.prototype.open;
+      Xhr.prototype.open = wrappedOpen;
     } catch {
       notify('hook-failed', { cause: 'xhr-readonly' });
     }
@@ -387,9 +392,8 @@ export function installNetworkHook(options: NetworkHookOptions = {}): NetworkHoo
       if (!active) return;
       active = false;
       if (target.fetch === wrappedFetch) target.fetch = originalFetch;
-      if (xhrHooked && Xhr) {
+      if (xhrHooked && Xhr && Xhr.prototype.open === wrappedOpen) {
         Xhr.prototype.open = originalOpen;
-        Xhr.prototype.send = originalSend;
       }
     },
   };

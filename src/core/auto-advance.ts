@@ -12,7 +12,16 @@ function formatLocalMinute(timestampSeconds: number, includeSeconds: boolean): s
   const hour = String(date.getHours()).padStart(2, '0');
   const minute = String(date.getMinutes()).padStart(2, '0');
   const second = String(date.getSeconds()).padStart(2, '0');
-  return `${year}-${month}-${day}T${hour}:${minute}${includeSeconds ? `:${second}` : ''}`;
+  const localMinute = `${year}-${month}-${day}T${hour}:${minute}${includeSeconds ? `:${second}` : ''}`;
+  if (parseLocalMinute(localMinute) === timestampSeconds) return localMinute;
+
+  const offsetMinutes = -date.getTimezoneOffset();
+  const offsetSign = offsetMinutes >= 0 ? '+' : '-';
+  const absoluteOffsetMinutes = Math.abs(offsetMinutes);
+  const offsetHour = String(Math.floor(absoluteOffsetMinutes / 60)).padStart(2, '0');
+  const offsetMinute = String(absoluteOffsetMinutes % 60).padStart(2, '0');
+  const disambiguated = `${localMinute}${offsetSign}${offsetHour}:${offsetMinute}`;
+  return parseLocalMinute(disambiguated) === timestampSeconds ? disambiguated : null;
 }
 
 /** 根据自动推进锚点计算当前有效配置，不写入持久化状态。 */
@@ -25,7 +34,7 @@ export function resolveAutoAdvanceConfig(config: FilterConfig, nowMs = Date.now(
     return { ...config, autoAdvance: false, autoAdvanceStartedAt: null, autoAdvanceBaseCutoffMinute: null };
   }
   const elapsedMinutes = Math.floor(Math.max(0, nowMs - Number(startedAt)) / MINUTE_MS);
-  const cutoffMinute = formatLocalMinute(baseSeconds + elapsedMinutes * 60, /T\d{2}:\d{2}:\d{2}$/.test(baseCutoff)) ?? baseCutoff;
+  const cutoffMinute = formatLocalMinute(baseSeconds + elapsedMinutes * 60, /T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2})?$/.test(baseCutoff)) ?? baseCutoff;
   return { ...config, cutoffMinute, autoAdvanceBaseCutoffMinute: baseCutoff };
 }
 

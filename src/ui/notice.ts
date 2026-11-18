@@ -28,13 +28,31 @@ export function createNoticeManager(options: NoticeOptions = {}): NoticeManager 
   const root = doc.createElement('div');
   root.id = NOTICE_ROOT_ID;
   root.setAttribute('aria-live', 'polite');
-  root.style.cssText = 'position:fixed;z-index:2147483647;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;max-width:min(360px,calc(100vw - 32px));font:14px/1.55 "Noto Sans SC","Microsoft YaHei",sans-serif;';
+  root.setAttribute('role', 'region');
+  root.setAttribute('aria-label', '时光机提示');
+  root.tabIndex = -1;
+  root.style.cssText = 'position:fixed;z-index:2147483645;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;max-width:min(360px,calc(100vw - 32px));font:14px/1.55 "Noto Sans SC","Microsoft YaHei",sans-serif;';
   doc.documentElement.append(root);
   const seen = new Set<string>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
-  let searchNotice: HTMLElement | null = null;
+  let searchNotice: ReturnType<typeof createItem> | null = null;
 
-  const createItem = (message: string): HTMLElement => {
+  const activeElement = (): Element | null => {
+    let active = doc.activeElement;
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+    return active;
+  };
+  let outsideFocus = activeElement() as HTMLElement | null;
+  const rememberFocus = (event: FocusEvent): void => {
+    const from = event.composedPath()[0] as HTMLElement | undefined;
+    if (from && !root.contains(from) && root.contains(event.relatedTarget as Node | null)) outsideFocus = from;
+  };
+  doc.addEventListener('focusout', rememberFocus, true);
+
+  const createItem = (message: string, duration = 0) => {
+    let previousFocus = activeElement() as HTMLElement | null;
+    let pendingDismiss = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const item = doc.createElement('div');
     item.style.cssText = 'display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border:1px solid #e9edf1;border-radius:10px;background:#fff;color:#20252b;box-shadow:0 6px 24px #26394b1f;overflow-wrap:anywhere;';
     const text = doc.createElement('span');
@@ -44,10 +62,32 @@ export function createNoticeManager(options: NoticeOptions = {}): NoticeManager 
     close.textContent = '×';
     close.setAttribute('aria-label', '关闭提示');
     close.style.cssText = 'flex-shrink:0;border:0;background:transparent;color:#646e79;cursor:pointer;font:20px/1.1 sans-serif;padding:0 2px;';
-    close.addEventListener('click', () => item.remove());
+    const dismiss = (manual = false): void => {
+      const focused = item.contains(activeElement());
+      if (focused && !manual) { pendingDismiss = true; return; }
+      if (timer !== undefined) { clearTimeout(timer); timers.delete(timer); }
+      const adjacent = item.nextElementSibling ?? item.previousElementSibling;
+      item.remove();
+      if (focused) {
+        const next = adjacent?.querySelector<HTMLButtonElement>('button');
+        (next ?? (previousFocus?.isConnected ? previousFocus : root)).focus();
+      }
+    };
+    close.addEventListener('click', () => dismiss(true));
+    item.addEventListener('focusin', event => {
+      const from = event.relatedTarget as HTMLElement | null;
+      if (from && !root.contains(from)) previousFocus = outsideFocus ?? from;
+    });
+    item.addEventListener('focusout', () => {
+      queueMicrotask(() => { if (pendingDismiss && !item.contains(activeElement())) dismiss(); });
+    });
     item.append(text, close);
     root.append(item);
-    return item;
+    if (duration > 0) {
+      timer = setTimeout(() => { timers.delete(timer!); dismiss(); }, duration);
+      timers.add(timer);
+    }
+    return { element: item, dismiss };
   };
 
   const closeAll = (): void => {
@@ -62,30 +102,24 @@ export function createNoticeManager(options: NoticeOptions = {}): NoticeManager 
       const key = `${route}|${reason}`;
       if (seen.has(key)) return;
       seen.add(key);
-      const item = createItem(message);
-      const duration = options.durationMs ?? 8000;
-      if (duration > 0) {
-        const timer = setTimeout(() => {
-          timers.delete(timer);
-          item.remove();
-        }, duration);
-        timers.add(timer);
-      }
+      createItem(message, options.durationMs ?? 8000);
     },
     setSearching(searching) {
       if (searching && !searchNotice) {
         searchNotice = createItem('正在寻找符合截止时间的视频…');
-        searchNotice.dataset.favoriteSearching = 'true';
-        searchNotice.setAttribute('role', 'status');
-        searchNotice.setAttribute('aria-busy', 'true');
+        searchNotice.element.dataset.favoriteSearching = 'true';
+        searchNotice.element.setAttribute('role', 'status');
+        searchNotice.element.setAttribute('aria-busy', 'true');
       } else if (!searching) {
-        searchNotice?.remove();
+        searchNotice?.element.removeAttribute('aria-busy');
+        searchNotice?.dismiss();
         searchNotice = null;
       }
     },
     closeAll,
     destroy: () => {
       closeAll();
+      doc.removeEventListener('focusout', rememberFocus, true);
       root.remove();
       seen.clear();
     },

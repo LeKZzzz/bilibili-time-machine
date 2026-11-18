@@ -367,7 +367,7 @@ describe('favorite home fill core', () => {
     const { createFavoriteHomeFillController } = await import('../../src/runtime/favorite-home-fill-controller');
     const config = {
       cutoffMinute: '2030-01-01T00:00', enabled: true, supplementBudget: 20, debug: false,
-      favoriteHomeFillEnabled: true, favoriteFolderIds: ['1'], favoriteFolderLimit: 1, favoriteVideoLimit: 1,
+      favoriteHomeFillEnabled: true, favoriteFolderIds: ['1'], favoriteFolderUid: '7', favoriteFolderLimit: 1, favoriteVideoLimit: 1,
     };
     const controller = createFavoriteHomeFillController({
       root: document,

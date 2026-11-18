@@ -23,7 +23,7 @@ The tool uses content still available on Bilibili. It cannot restore historical 
 
 [Installation](#installation) · [Watch animation](#watch-animation) · [Ad breaks](#configure-public-service-ads) · [Browse by date](#browse-with-a-date-in-the-past) · [Troubleshooting](#troubleshooting-and-limitations) · [Contributing](#contributing)
 
-> Version scope: this guide describes `v0.4.0`. For an older version, follow its [Release notes](https://github.com/LeKZzzz/bilibili-time-machine/releases). See [Version and compatibility](#version-and-compatibility) for tested and untested scenarios.
+> Version scope: this guide covers `v0.4.1`. Version `v0.4.0` does not include account-bound folder selections, failed-save retry, or the later search and interface fixes. Check the corresponding [Release notes](https://github.com/LeKZzzz/bilibili-time-machine/releases) before installing. See [Version and compatibility](#version-and-compatibility) for tested and untested scenarios.
 
 <details>
 <summary>Preview: time filtering, Animation Time Machine, and favorites</summary>
@@ -46,17 +46,19 @@ Screenshots use the `v0.4.0` UI with demo data, not personal favorites. The samp
 
 ### Chrome extension
 
-1. Download `bilibili-time-machine-extension-vX.Y.Z.zip` from **Assets** on [GitHub Releases](https://github.com/LeKZzzz/bilibili-time-machine/releases) and extract it.
+1. Download `bilibili-time-machine-extension-vX.Y.Z.zip` from **Assets** on [GitHub Releases](https://github.com/LeKZzzz/bilibili-time-machine/releases) and extract it to a permanent directory that you will reuse for updates.
 2. Open `chrome://extensions`, enable **Developer mode**, and click **Load unpacked**.
 3. Select the directory that **directly contains `manifest.json`**, refresh Bilibili, and click “时光机” (Time Machine).
 
-To update, load the new directory, confirm the extension version, and refresh Bilibili. Do not use the Release's **Source code** archives; they are not installable packages.
+**To update, keep the original extension and installation directory.** Overwrite the files in the original directory that directly contains `manifest.json`, click **Reload** on the original extension's card in `chrome://extensions`, confirm the version, and refresh Bilibili. This keeps using the original extension's settings, playlist, and progress. Do not remove the original extension first or load the new directory as another extension.
+
+Loading a different directory creates a different extension ID. The two copies do not share data, and the old copy may remain enabled. If you have already installed a second copy, disable the new one, keep the original extension and directory, and update them as described above; your original data may still be there. Do not use the Release's **Source code** archives; they are not installable packages.
 
 ### Tampermonkey userscript
 
-1. Install and enable [Tampermonkey](https://www.tampermonkey.net/).
+1. Install and enable [Tampermonkey](https://www.tampermonkey.net/). In Chrome, also open Tampermonkey's **Details** in `chrome://extensions` and turn on **Allow User Scripts** if that switch is shown. Enabling the extension alone does not grant permission to run userscripts.
 2. Open [Bilibili Time Machine on Greasy Fork](https://greasyfork.org/en/scripts/601594), click **Install this script**, and confirm in Tampermonkey.
-3. Refresh Bilibili and click “时光机” (Time Machine). You can check for later updates in Tampermonkey.
+3. Refresh Bilibili and click “时光机” (Time Machine). If the button is still missing after allowing userscripts, reload Tampermonkey or restart the browser, then refresh Bilibili. You can check for later updates in Tampermonkey.
 
 **Animation and ad features require `v0.3.0` or later.** Greasy Fork and GitHub are published separately, so their versions may differ. If Greasy Fork has not been updated yet, download `bilibili-time-machine.user.js` from a GitHub Release and import it into Tampermonkey. The extracted `bilibili-time-machine-userscript-vX.Y.Z.zip` contains the same script.
 
@@ -143,6 +145,8 @@ This feature is off by default. Sign in to Bilibili with an account that can acc
 2. Return to the homepage. If gaps remain, click “继续寻找” (Keep looking), or scroll down and stop to start another round.
 3. After changing saved videos, click “更新收藏偏好” (Update preferences). Use “查看兴趣标签” (View interest tags) to see the tags taken from your saved videos. “刷新收藏夹列表” (Refresh folder list) updates the available folders, not the interest tags.
 
+The selected folders are bound to the Bilibili account used to select them. Select folders again after switching accounts. Selections saved before account binding was added also need to be selected again once. Only one selection is stored: after selecting folders on another account, switching back requires selecting them again.
+
 The default is **up to 3 folders, reading 50 videos per folder**, adjustable in settings. Videos are found using your interest tags and must meet the cutoff. They fill empty slots without replacing visible videos. If no suitable video is found, the gap remains.
 
 ## Troubleshooting and limitations
@@ -150,6 +154,7 @@ The default is **up to 3 folders, reading 50 videos per folder**, adjustable in 
 | Problem | Explanation or action |
 | --- | --- |
 | No entry point, or the old interface remains after an update | Check the installed version, enabled state, and supported page. Refresh Bilibili after reloading the extension. Do not enable the userscript and extension together |
+| Filtering settings show “设置未保存” (Settings not saved) | The current page uses the new settings, but refreshing or navigating may restore the old values. Once storage is available, click “重试保存” (Retry save). If you just reloaded the extension, refresh Bilibili, then configure and save again |
 | Animation does not start automatically | The browser may be blocking autoplay. Follow the prompt and click “继续播放” (Continue playback). After a reload or reopening, use “继续观看” (Resume) to restore progress |
 | Episodes could not be found for a built-in show | Existing episodes remain available. Open the show, choose “添加分集” (Add episodes), find and select the episodes you need, then confirm and save settings |
 | A bangumi episode is skipped | Preview-only, inaccessible, or unavailable episodes are skipped. Playback stops if the entire playlist is unavailable. Member-only content still requires the appropriate account access |
@@ -174,16 +179,24 @@ When episodes cannot be found for a built-in show, existing results are kept ins
 
 ## Data storage and privacy
 
-Playback settings, playlists, and resume progress are stored locally for the current installation method and do not automatically sync between the extension and userscript. Preferences from your favorites are kept separate by Bilibili account. When “收藏偏好补充首页” (Fill homepage from favorites) is off or no folders are selected, saved videos are not read and interest-tag searches do not run.
+Playback settings, playlists, and resume progress are stored locally for the current installation method and do not automatically sync between the extension and userscript. Folder selections are bound to the Bilibili account used to select them; preference caches are stored by account. Select folders again after switching accounts. When “收藏偏好补充首页” (Fill homepage from favorites) is off or no folders are selected, saved videos are not read and interest-tag searches do not run.
 
 <details>
 <summary>Storage, cache, and diagnostic details</summary>
 
 - The userscript uses GM storage; the extension uses `chrome.storage.local`. Playback and filtering settings are stored separately.
-- Folder names use the site's `localStorage`; interest tags, suggested videos, and recommendation history use `IndexedDB`. Pages on the same origin can reuse them, but different Bilibili subdomains cannot. Without IndexedDB, these caches stay in the current page's memory.
-- Interest tags are cached for 24 hours, up to 100 tags; videos awaiting recommendation for 7 days, up to 500 videos; recommendation history for 30 days, up to 1,000 records. All are separated by account. Expiring caches mean deduplication is not permanent.
+- Folder-list details such as names, IDs, and video counts use the site's `localStorage`. The site's `IndexedDB` stores account UIDs, selected folder IDs, and details of the saved videos read from those folders: BV IDs, titles, cover URLs, publication and favorite timestamps, tags, and aggregated interest tags. It also stores metadata for videos awaiting recommendation, tag-search progress, and recommendation history. Pages on the same origin can reuse them, but different Bilibili subdomains cannot. Without IndexedDB, these caches stay in the current page's memory.
+- Favorite snapshots can be reused for 24 hours, with up to 100 interest tags; videos awaiting recommendation for 7 days, up to 500 videos; recommendation history for 30 days, up to 1,000 records. All are separated by account. These periods determine whether data can be reused when read; they do not mean records are immediately deleted from disk on expiry. Folder-list caches are not periodically deleted either. Expiring caches mean deduplication is not permanent.
 - Additional requests to verify video timestamps default to at most 20 videos per page or route, configurable from 0–100, with up to 3 concurrent requests. Favorite sources can be set to 1–10 folders and 1–200 videos per folder.
 - Development builds write sanitized logs only to the current browser console; they do not upload them. Logs exclude response bodies, comment text, cookies, and full URLs. Production builds omit project diagnostic logs.
+
+Turning off the feature stops processing but keeps stored data. Uninstalling the extension or userscript does not automatically clear Bilibili's site storage. To clear favorite caches:
+
+1. Turn the feature off and close other Bilibili tabs. On each Bilibili subdomain where you used the feature, open the browser's developer tools and select **Application**.
+2. Delete the `bilibili-time-filter-favorite-home-fill` database under **IndexedDB**, and delete keys starting with `bilibili-time-filter:favorite-folders:v1:` under **Local Storage**.
+3. Refresh the page. This clears all accounts' favorite caches and recommendation history on that origin; it does not change your favorites on Bilibili or delete playlists and progress in extension or GM storage.
+
+The browser's **Clear site data** option also clears site caches, but removes other Bilibili site data and may sign you out.
 
 </details>
 
@@ -194,11 +207,15 @@ Report problems through [GitHub Issues](https://github.com/LeKZzzz/bilibili-time
 ### Version and compatibility
 
 <details>
-<summary>v0.4.0 changes and compatibility checks (2026-11-10)</summary>
+<summary>v0.4.1 fixes and compatibility checks (2026-11-19)</summary>
 
 `v0.4.0` includes top-level tabs, revised copy and button layouts, the 31-show catalog, episode import and automatic completion, separate dialogs, resumable 60-second ad breaks, order changes during playback, resuming from the current page, and automatic continuation after manual episode changes. Reload the extension after updating it, then refresh Bilibili. Refresh Bilibili after updating the userscript as well.
 
-Testing with the installed Chrome extension has covered automatic episode changes, resuming saved progress, and returning from ads with member-only content. Some Tampermonkey combinations, native fullscreen on member content, and continuous buffering still need verification. Existing results do not guarantee that every source will work.
+`v0.4.1` fixes isolation of search repagination and lookup budgets when search conditions change, XHR response-filtering timing, account-bound favorite sources, failed-save retry, and save ordering across page navigation. It also improves short-screen dialogs, keyboard focus, and error feedback. After upgrading from an older version, select your favorite folders again; do the same after switching Bilibili accounts. This version also removes repeated interface instructions and fixes automatic cutoff advancement during the daylight-saving fall-back hour.
+
+Fixes checked on 2026-11-10 passed a fixed-directory extension upgrade that retained settings, playlists, and progress, plus account reselection, failed-save retry, and save ordering across page navigation. An installed MV3 build passed representative playback flows using controlled media fixtures; one anonymous Bilibili sample also played for about 1–3 seconds. After a persistent Tampermonkey installation in one isolated profile, two normal browser restarts both ran the script automatically and restored GM settings. The entry point also appeared on an anonymous Bilibili page after restarting. Later fixes checked on 2026-11-17 and 2026-11-18 passed local tests, production and development builds, and relevant controlled browser checks, without new installed-playback acceptance tests. These fixes are included in `v0.4.1`; the published `v0.4.0` packages remain unchanged.
+
+Member-content playback evidence still comes from the installed Chrome extension tested on 2026-10-27, covering the episode changes, progress recovery, and member-content ad recovery available then. Complete Tampermonkey playback flows, native fullscreen on member content, and continuous buffering remain unverified in the current version. Fixtures and brief playback samples do not establish full-episode or universal source compatibility.
 
 </details>
 
@@ -245,7 +262,7 @@ The project uses TypeScript, Vite, Vitest, and jsdom. The settings panel uses na
 <details>
 <summary>Maintainers: build artifacts and automatic releases</summary>
 
-- **Actions builds:** `build.yml` checks, tests, and builds on pushes or manual runs. It provides the production Artifact `bilibili-time-machine-release` and development Artifact `bilibili-time-machine-dev`. Sign in to GitHub to download from a successful [Build run](https://github.com/LeKZzzz/bilibili-time-machine/actions), then use the extracted `extension/` or `userscript/` output.
+- **Actions builds:** `build.yml` checks, tests, and builds on pushes, Pull Requests, or manual runs. Pushes and manual runs provide the production Artifact `bilibili-time-machine-release` and development Artifact `bilibili-time-machine-dev`; Pull Requests only run checks and builds. Sign in to GitHub to download from a successful [Build run](https://github.com/LeKZzzz/bilibili-time-machine/actions), then use the extracted `extension/` or `userscript/` output.
 - **GitHub Releases:** align the versions in `package.json`, the root package entries in `package-lock.json`, `extension/manifest.json`, and `vite.config.ts`, then push the public changes to `main`. `release.yml` checks the corresponding `vX.Y.Z`: published versions are skipped; otherwise it builds, validates versions, uploads the three production assets, and publishes the Release.
 - **Retries:** rerun a failed workflow or dispatch it manually on `main`. An existing draft is completed using its original commit or existing tag, without rewriting tags or published versions. A tag-only push does not trigger publication. The workflow uses the built-in `GITHUB_TOKEN`, not a PAT.
 - **Separate channels:** Actions Artifacts are not Releases. Publishing on GitHub does not update Greasy Fork or extension stores; Greasy Fork requires a separate publication.

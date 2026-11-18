@@ -1,7 +1,145 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createFilterPanel } from '../../src/ui/panel';
+import type { FavoriteFolderList } from '../../src/core/types';
 
 describe('createFilterPanel', () => {
+  it('带偏移的截止瞬间显示为本地输入，非时间设置保存保留原瞬间', () => {
+    const cutoff = '2026-11-01T01:00:37-05:00';
+    const onChange = vi.fn();
+    const controller = createFilterPanel({ document, config: { cutoffMinute: cutoff, enabled: true, supplementBudget: 20, debug: false }, onChange });
+    const root = controller.element.shadowRoot!;
+    const local = new Date(cutoff);
+    const expectedDate = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
+    const expectedTime = `${String(local.getHours()).padStart(2, '0')}:${String(local.getMinutes()).padStart(2, '0')}:37`;
+    expect(root.querySelector<HTMLInputElement>('#cutoff-date')!.value).toBe(expectedDate);
+    expect(root.querySelector<HTMLInputElement>('#cutoff-time')!.value).toBe(expectedTime);
+    root.querySelector<HTMLButtonElement>('#filter-control')!.click();
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ cutoffMinute: cutoff }));
+    controller.destroy();
+  });
+
+  it('保留加载前的时间草稿，配置就绪后才能应用和保存', () => {
+    let ready = false;
+    const onChange = vi.fn();
+    const config = { cutoffMinute: '2020-01-01T00:00:00', enabled: true, supplementBudget: 20, debug: false };
+    const controller = createFilterPanel({ document, config, onChange, isConfigReady: () => ready });
+    const root = controller.element.shadowRoot!;
+    const date = root.querySelector<HTMLInputElement>('#cutoff-date')!;
+    date.value = '2010-01-02';
+    date.dispatchEvent(new Event('input'));
+    root.querySelector<HTMLButtonElement>('#time-apply')!.click();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(root.querySelector('#time-draft-status')!.textContent).toBe('修改尚未应用');
+    expect(root.querySelector('#config-save-status')!.textContent).toContain('尚未读取完成');
+    root.querySelector<HTMLButtonElement>('#filter-control')!.click();
+    expect(onChange).not.toHaveBeenCalled();
+    ready = true;
+    controller.update(config);
+    expect(date.value).toBe('2010-01-02');
+    root.querySelector<HTMLButtonElement>('#time-apply')!.click();
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ cutoffMinute: '2010-01-02T00:00:00' }));
+    controller.destroy();
+  });
+
+  it('日期校验关联实际无效字段并聚焦，纠正和取消后清除错误', () => {
+    const controller = createFilterPanel({ document, config: { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false } });
+    const root = controller.element.shadowRoot!;
+    root.querySelector<HTMLButtonElement>('.toggle')!.click();
+    const date = root.querySelector<HTMLInputElement>('#cutoff-date')!;
+    const time = root.querySelector<HTMLInputElement>('#cutoff-time')!;
+    date.value = ''; time.value = '';
+    root.querySelector<HTMLButtonElement>('#time-apply')!.click();
+    expect(root.activeElement).toBe(date);
+    expect(date.getAttribute('aria-invalid')).toBe('true');
+    expect(date.getAttribute('aria-describedby')).toBe('time-draft-status');
+    expect(time.getAttribute('aria-invalid')).toBe('true');
+    date.value = '2020-01-01'; date.dispatchEvent(new Event('input'));
+    expect(date.hasAttribute('aria-invalid')).toBe(false);
+    expect(time.getAttribute('aria-invalid')).toBe('true');
+    root.querySelector<HTMLButtonElement>('#time-apply')!.click();
+    expect(root.activeElement).toBe(time);
+    time.value = '08:00:00'; time.dispatchEvent(new Event('input'));
+    expect(time.hasAttribute('aria-describedby')).toBe(false);
+    root.querySelector<HTMLButtonElement>('#time-cancel')!.click();
+    expect(date.hasAttribute('aria-describedby')).toBe(false);
+    expect(root.querySelector('#time-draft-status')!.textContent).toBe('');
+    controller.destroy();
+  });
+
+  it('提示允许指针移入，Escape只关闭提示，随后可以关闭面板', () => {
+    vi.useFakeTimers();
+    const controller = createFilterPanel({ document, config: { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false } });
+    const root = controller.element.shadowRoot!;
+    root.querySelector<HTMLButtonElement>('.toggle')!.click();
+    const help = root.querySelector<HTMLElement>('[data-help="favorite-enabled"]')!;
+    const tooltip = root.querySelector<HTMLElement>('#setting-tooltip')!;
+    help.dispatchEvent(new MouseEvent('mouseenter'));
+    help.dispatchEvent(new MouseEvent('mouseleave'));
+    vi.advanceTimersByTime(100);
+    tooltip.dispatchEvent(new MouseEvent('mouseenter'));
+    vi.advanceTimersByTime(1000);
+    expect(tooltip.hidden).toBe(false);
+    help.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(tooltip.hidden).toBe(true);
+    expect(root.querySelector<HTMLElement>('.card')!.hidden).toBe(false);
+    help.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(root.querySelector<HTMLElement>('.card')!.hidden).toBe(true);
+    controller.destroy();
+    vi.useRealTimers();
+  });
+
+  it('keeps applied settings usable after a failed save and retries the latest settings', async () => {
+    const onChange = vi.fn().mockRejectedValueOnce(new Error('存储不可用')).mockResolvedValue(undefined);
+    const controller = createFilterPanel({ document,
+      config: { cutoffMinute: '2020-01-01T00:00:00', enabled: false, supplementBudget: 20, debug: false }, onChange,
+    });
+    const root = controller.element.shadowRoot!;
+    root.querySelector<HTMLButtonElement>('#filter-control')!.click();
+    expect(root.querySelector('#filter-state')!.textContent).toBe('过滤中');
+    await vi.waitFor(() => expect(root.querySelector<HTMLElement>('#config-save-feedback')!.hidden).toBe(false));
+    expect(root.querySelector('#config-save-status')!.textContent).toContain('刷新或换页后可能恢复旧值');
+    controller.update({ cutoffMinute: '2020-01-01T00:01:00', enabled: true, supplementBudget: 20, debug: false });
+    root.querySelector<HTMLButtonElement>('#config-save-retry')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLElement>('#config-save-feedback')!.hidden).toBe(true));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ cutoffMinute: '2020-01-01T00:01:00', enabled: true }));
+    controller.destroy();
+  });
+
+  it('does not let an older failed save overwrite feedback for a newer successful save', async () => {
+    let rejectFirst!: (reason: Error) => void;
+    const onChange = vi.fn().mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectFirst = reject; })).mockResolvedValue(undefined);
+    const controller = createFilterPanel({ document,
+      config: { cutoffMinute: '2020-01-01T00:00:00', enabled: false, supplementBudget: 20, debug: false }, onChange,
+    });
+    const root = controller.element.shadowRoot!;
+    root.querySelector<HTMLButtonElement>('#filter-control')!.click();
+    root.querySelector<HTMLButtonElement>('#filter-control')!.click();
+    await Promise.resolve();
+    rejectFirst(new Error('旧写入失败'));
+    await Promise.resolve();
+    expect(root.querySelector<HTMLElement>('#config-save-feedback')!.hidden).toBe(true);
+    controller.destroy();
+  });
+
+  it.each([null, 'account-A'])('requires an explicit source selection when saved sources belong to %s', async (savedUid) => {
+    const onChange = vi.fn();
+    const controller = createFilterPanel({ document,
+      config: { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false,
+        favoriteHomeFillEnabled: true, favoriteFolderIds: ['old-folder'], favoriteFolderUid: savedUid }, onChange,
+      onFavoriteFoldersRefresh: async () => ({ uid: 'account-B', folders: [{ id: 'new-folder', title: '新账号收藏夹' }] }),
+    });
+    const root = controller.element.shadowRoot!;
+    root.querySelector<HTMLButtonElement>('#favorite-folders-open')!.click();
+    await vi.waitFor(() => expect(root.querySelector('[data-folder-id="new-folder"]')).not.toBeNull());
+    expect(root.querySelector('[data-folder-id="old-folder"]')).toBeNull();
+    expect(root.querySelectorAll('[data-folder-id][aria-pressed="true"]')).toHaveLength(0);
+    expect(root.querySelector('#favorite-folder-status')!.textContent).toContain('重新选择');
+    root.querySelector<HTMLButtonElement>('[data-folder-id="new-folder"]')!.click();
+    root.querySelector<HTMLButtonElement>('#favorite-folders-save')!.click();
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ favoriteFolderUid: 'account-B', favoriteFolderIds: ['new-folder'] }));
+    controller.destroy();
+  });
+
   it('renders, emits changes, and resets the cutoff to the current time', async () => {
     const onChange = vi.fn();
     const controller = createFilterPanel({
@@ -98,9 +236,9 @@ describe('createFilterPanel', () => {
 
   it('shows folder management as a second view and saves selections only on confirmation', async () => {
     const onChange = vi.fn();
-    const onFavoriteFoldersRefresh = vi.fn(async () => Array.from({ length: 12 }, (_, index) => ({
+    const onFavoriteFoldersRefresh = vi.fn(async () => ({ uid: '7', folders: Array.from({ length: 12 }, (_, index) => ({
       id: String(index + 1), title: `收藏夹 ${index + 1}`, mediaCount: 4,
-    })));
+    })) }));
     const controller = createFilterPanel({
       document,
       config: { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false, favoriteHomeFillEnabled: true, favoriteFolderLimit: 1 },
@@ -114,6 +252,7 @@ describe('createFilterPanel', () => {
     expect(root?.querySelector<HTMLElement>('#main-view')?.hidden).toBe(true);
     expect(root?.querySelector<HTMLElement>('#favorite-folders-dialog')?.hidden).toBe(false);
     const folders = root?.querySelector<HTMLElement>('#favorite-folders');
+    await vi.waitFor(() => expect(root?.querySelector<HTMLButtonElement>('#favorite-folders-save')?.disabled).toBe(false));
     expect(folders?.querySelectorAll('button')).toHaveLength(12);
     folders?.querySelector<HTMLButtonElement>('[data-folder-id="2"]')?.click();
     expect(folders?.querySelector('[data-folder-id="2"]')?.getAttribute('aria-pressed')).toBe('true');
@@ -128,10 +267,10 @@ describe('createFilterPanel', () => {
   });
 
   it('discards modal drafts on cancel or Escape, validates limits, and preserves drafts on unrelated updates', async () => {
-    const config = { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false, favoriteHomeFillEnabled: true, favoriteFolderIds: ['1', '2'], favoriteFolderLimit: 3, favoriteVideoLimit: 50 };
+    const config = { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false, favoriteHomeFillEnabled: true, favoriteFolderIds: ['1', '2'], favoriteFolderUid: '7', favoriteFolderLimit: 3, favoriteVideoLimit: 50 };
     const onChange = vi.fn();
     const controller = createFilterPanel({ document, config, onChange,
-      onFavoriteFoldersRefresh: async () => [{ id: '1', title: '音乐' }, { id: '2', title: '游戏' }, { id: '3', title: '电影' }],
+      onFavoriteFoldersRefresh: async () => ({ uid: '7', folders: [{ id: '1', title: '音乐' }, { id: '2', title: '游戏' }, { id: '3', title: '电影' }] }),
     });
     const root = controller.element.shadowRoot!;
     const open = root.querySelector<HTMLButtonElement>('#favorite-folders-open')!;
@@ -141,6 +280,7 @@ describe('createFilterPanel', () => {
     root.querySelector<HTMLButtonElement>('.toggle')!.click();
     await vi.waitFor(() => expect(root.querySelectorAll('.folder-option')).toHaveLength(3));
     open.click();
+    await vi.waitFor(() => expect(save.disabled).toBe(false));
     limit.value = '1';
     limit.dispatchEvent(new Event('input'));
     expect(save.disabled).toBe(true);
@@ -161,6 +301,7 @@ describe('createFilterPanel', () => {
     expect(root.querySelector<HTMLElement>('#main-view')!.hidden).toBe(false);
     expect(onChange).not.toHaveBeenCalled();
     open.click();
+    await vi.waitFor(() => expect(save.disabled).toBe(false));
     expect(limit.value).toBe('3');
     expect(videos.value).toBe('50');
     expect(root.querySelectorAll('[aria-pressed="true"]')).toHaveLength(2);
@@ -170,6 +311,7 @@ describe('createFilterPanel', () => {
     expect(root.querySelector<HTMLElement>('#favorite-folders-dialog')!.hidden).toBe(true);
     expect(root.activeElement).toBe(open);
     open.click();
+    await vi.waitFor(() => expect(save.disabled).toBe(false));
     expect(limit.value).toBe('3');
     videos.value = '80';
     save.click();
@@ -179,8 +321,8 @@ describe('createFilterPanel', () => {
   });
 
   it('blocks folder requests while disabled and does not re-enable refresh after an in-flight load', async () => {
-    let resolve!: (value: { id: string; title: string }[]) => void;
-    const onFavoriteFoldersRefresh = vi.fn(() => new Promise<{ id: string; title: string }[]>((done) => { resolve = done; }));
+    let resolve!: (value: FavoriteFolderList) => void;
+    const onFavoriteFoldersRefresh = vi.fn(() => new Promise<FavoriteFolderList>((done) => { resolve = done; }));
     const controller = createFilterPanel({ document,
       config: { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false },
       onFavoriteFoldersRefresh,
@@ -198,7 +340,7 @@ describe('createFilterPanel', () => {
     expect(onFavoriteFoldersRefresh).toHaveBeenCalledWith(false, expect.any(Function));
     enabled.checked = false;
     enabled.dispatchEvent(new Event('change'));
-    resolve([{ id: '1', title: '不应写入的收藏夹' }]);
+    resolve({ uid: '7', folders: [{ id: '1', title: '不应写入的收藏夹' }] });
     await vi.waitFor(() => expect(root.querySelector('#favorite-folder-status')!.textContent).toContain('选择收藏夹并保存'));
     expect(refresh.disabled).toBe(true);
     expect(root.querySelectorAll('.folder-option')).toHaveLength(0);
@@ -206,7 +348,7 @@ describe('createFilterPanel', () => {
   });
 
   it('distinguishes cached loading from forced refresh and explains caching on focus', async () => {
-    const onFavoriteFoldersRefresh = vi.fn(async () => [{ id: '1', title: '收藏夹' }]);
+    const onFavoriteFoldersRefresh = vi.fn(async () => ({ uid: '7', folders: [{ id: '1', title: '收藏夹' }] }));
     const controller = createFilterPanel({ document,
       config: { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false, favoriteHomeFillEnabled: true },
       onFavoriteFoldersRefresh,
@@ -306,8 +448,8 @@ describe('createFilterPanel', () => {
       id: String(index + 1), title: `很长的收藏夹名称：影视与科学探索系列 ${index + 1}`,
     }));
     const config = { cutoffMinute: '2026-10-25T11:23:51', enabled: true, supplementBudget: 20, debug: false,
-      favoriteHomeFillEnabled: true, favoriteFolderLimit: 10, favoriteFolderIds: folders.slice(0, 10).map(({ id }) => id) };
-    const controller = createFilterPanel({ document, config, onFavoriteFoldersRefresh: async () => folders });
+      favoriteHomeFillEnabled: true, favoriteFolderUid: '7', favoriteFolderLimit: 10, favoriteFolderIds: folders.slice(0, 10).map(({ id }) => id) };
+    const controller = createFilterPanel({ document, config, onFavoriteFoldersRefresh: async () => ({ uid: '7', folders }) });
     const root = controller.element.shadowRoot!;
     await vi.waitFor(() => expect(root.querySelectorAll('.folder-option')).toHaveLength(100));
     const summary = root.querySelector<HTMLElement>('#favorite-selection-summary')!;
@@ -382,7 +524,7 @@ describe('createFilterPanel', () => {
     const onChange = vi.fn();
     const controller = createFilterPanel({ document,
       config: { cutoffMinute: null, enabled: false, supplementBudget: 20, debug: false },
-      onChange, onFavoriteFoldersRefresh: async () => [{ id: '1', title: '科技探索' }],
+      onChange, onFavoriteFoldersRefresh: async () => ({ uid: '7', folders: [{ id: '1', title: '科技探索' }] }),
     });
     const root = controller.element.shadowRoot!;
     root.querySelector<HTMLButtonElement>('.toggle')!.click();
@@ -396,6 +538,7 @@ describe('createFilterPanel', () => {
     enabled.click();
     expect(root.querySelector('[data-folder-id="1"]')!.getAttribute('aria-pressed')).toBe('false');
     root.querySelector<HTMLButtonElement>('[data-folder-id="1"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('#favorite-folders-save')!.disabled).toBe(false));
     root.querySelector<HTMLButtonElement>('#favorite-folders-save')!.click();
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ favoriteHomeFillEnabled: true, favoriteFolderIds: ['1'], favoriteRefreshRequestedAt: expect.any(Number) }));
     expect(root.querySelector('#favorite-selection-summary')!.textContent).toBe('科技探索');

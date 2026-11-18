@@ -138,6 +138,47 @@ describe('真实播放器接入边界', () => {
     expect(onEvent.mock.calls.filter(([event]) => event.type === 'unavailable')).toHaveLength(1);
     window.history.replaceState(null, '', previousUrl);
   });
+  it('路由切换期间忽略旧 404，收到新状态后的 404 仍然报告', () => {
+    const page = window as Window & { __INITIAL_STATE__?: unknown; __playinfo__?: unknown };
+    const previousUrl = window.location.href;
+    window.history.replaceState(null, '', '/video/BVold');
+    delete page.__playinfo__;
+    page.__INITIAL_STATE__ = { error: { code: 404, trueCode: -404, message: '旧条目失效' } };
+    const onEvent = vi.fn();
+    let isManaged = false;
+    player = createPlaybackPlayer({ managed: () => isManaged, onEvent, shouldHoldEnded: () => false });
+    player.refresh();
+
+    window.history.replaceState(null, '', '/bangumi/play/ep456');
+    isManaged = true;
+    player.refresh();
+    expect(onEvent.mock.calls.some(([event]) => event.type === 'unavailable')).toBe(false);
+
+    page.__INITIAL_STATE__ = { error: { code: 404, trueCode: -404, message: '新条目失效' } };
+    player.refresh();
+    expect(onEvent).toHaveBeenCalledWith({ type: 'unavailable', reason: '当前视频已失效' });
+    window.history.replaceState(null, '', previousUrl);
+  });
+  it('原地修改旧错误对象的字段后识别新失败', () => {
+    const page = window as Window & { __INITIAL_STATE__?: unknown; __playinfo__?: unknown };
+    const previousUrl = window.location.href;
+    window.history.replaceState(null, '', '/video/BVold');
+    delete page.__playinfo__;
+    const error = { code: 404, trueCode: -404, message: '旧条目失效' };
+    page.__INITIAL_STATE__ = { error };
+    const onEvent = vi.fn();
+    let isManaged = false;
+    player = createPlaybackPlayer({ managed: () => isManaged, onEvent, shouldHoldEnded: () => false });
+    player.refresh();
+    window.history.replaceState(null, '', '/bangumi/play/ep456');
+    isManaged = true;
+    player.refresh();
+    expect(onEvent.mock.calls.some(([event]) => event.type === 'unavailable')).toBe(false);
+    error.message = '新条目失效';
+    player.refresh();
+    expect(onEvent).toHaveBeenCalledWith({ type: 'unavailable', reason: '当前视频已失效' });
+    window.history.replaceState(null, '', previousUrl);
+  });
   it('广告尚未加载也可跳过，保护正片暂停并恢复焦点', () => {
     player = createPlaybackPlayer({ onEvent: vi.fn(), shouldHoldEnded: () => false });
     player.refresh();
